@@ -57,6 +57,28 @@ export interface CollectionQueueItem {
   createdAt: Date
 }
 
+export interface PaymentLinkDraft {
+  id: string
+  merchantId: string
+  customerId: string
+  amount: number
+  url: string
+  provider: 'mock' | 'razorpay'
+  status: 'draft' | 'shared' | 'paid'
+  createdAt: Date
+}
+
+export interface CollectionReminder {
+  id: string
+  merchantId: string
+  customerId: string
+  paymentLinkId: string
+  channel: 'whatsapp'
+  message: string
+  status: 'ready' | 'shared'
+  createdAt: Date
+}
+
 /**
  * Derived balance calculation from ledger entries:
  * Outstanding Balance = SUM(CREDIT) - SUM(PAYMENT) + SUM(ADJUSTMENT)
