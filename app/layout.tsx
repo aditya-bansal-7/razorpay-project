@@ -3,8 +3,8 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
+  title: 'UdhaarAI | Simple credit tracking for merchants',
+  description: 'Track udhaar, payments, and customer balances with a clear merchant workspace.',
   generator: 'v0.app',
   icons: {
     icon: [
