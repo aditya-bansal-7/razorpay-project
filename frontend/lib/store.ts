@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import { api, toCustomerModel, toLedgerModel } from './api'
-import type { ActivityRecord, CollectionReminder, Customer, LedgerEntry, PaymentLinkDraft } from './types'
+import type { ActivityRecord, CollectionReminder, Customer, DashboardMetrics, LedgerEntry, PaymentLinkDraft } from './types'
 
 type CustomerInput = Pick<Customer, 'name' | 'phone' | 'email' | 'address'>
 type LedgerInput = Pick<LedgerEntry, 'customerId' | 'type' | 'amount' | 'description'>
@@ -13,11 +13,13 @@ type State = {
   activity: ActivityRecord[]
   paymentLinks: PaymentLinkDraft[]
   reminders: CollectionReminder[]
+  dashboardMetrics: DashboardMetrics | null
   loading: boolean
   error: string | null
   hydrate: () => Promise<void>
   refreshCustomers: () => Promise<void>
   refreshLedger: () => Promise<void>
+  refreshDashboard: () => Promise<void>
   addCustomer: (input: CustomerInput) => Promise<Customer | { error: string }>
   addLedgerEntry: (input: LedgerInput) => Promise<{ entry?: LedgerEntry; error?: string }>
   createPaymentLink: (customerId: string, amount: number) => PaymentLinkDraft | { error: string }
@@ -37,14 +39,16 @@ export const useUdhaarStore = create<State>((set, get) => ({
   activity: [],
   paymentLinks: [],
   reminders: [],
+  dashboardMetrics: null,
   loading: false,
   error: null,
   hydrate: async () => {
     set({ loading: true, error: null })
 
-    const [customersResponse, ledgerResponse] = await Promise.all([
+    const [customersResponse, ledgerResponse, dashboardResponse] = await Promise.all([
       api.listCustomers(),
       api.listLedger(),
+      api.listDashboard(),
     ])
 
     if (customersResponse.error) {
@@ -54,10 +58,21 @@ export const useUdhaarStore = create<State>((set, get) => ({
 
     const customers = (customersResponse.data ?? []).map(toCustomerModel)
     const ledgerEntries = (ledgerResponse.data ?? []).map(toLedgerModel)
+    const dashboardMetrics = dashboardResponse.data
+      ? {
+          totalCustomers: dashboardResponse.data.totalCustomers,
+          totalOutstandingBalance: dashboardResponse.data.totalOutstandingBalance,
+          totalCollected: dashboardResponse.data.totalCollected,
+          averageBalance: dashboardResponse.data.averageBalance,
+          overdueDays30: 0,
+          lastUpdated: new Date(dashboardResponse.data.lastUpdated),
+        }
+      : null
 
     set({
       customers,
       ledgerEntries,
+      dashboardMetrics,
       activity: ledgerEntries.slice(0, 8).map((entry) => ({
         id: `activity-${entry.id}`,
         merchantId: entry.merchantId,
@@ -94,6 +109,24 @@ export const useUdhaarStore = create<State>((set, get) => ({
         description: `${entry.type === 'credit' ? 'Udhaar added for' : entry.type === 'payment' ? 'Payment received from' : 'Adjustment recorded for'} ${get().customers.find((c) => c.id === entry.customerId)?.name ?? 'customer'}`,
         timestamp: entry.createdAt,
       })),
+    })
+  },
+  refreshDashboard: async () => {
+    const response = await api.listDashboard()
+    if (response.error) {
+      set({ error: response.error })
+      return
+    }
+    if (!response.data) return
+    set({
+      dashboardMetrics: {
+        totalCustomers: response.data.totalCustomers,
+        totalOutstandingBalance: response.data.totalOutstandingBalance,
+        totalCollected: response.data.totalCollected,
+        averageBalance: response.data.averageBalance,
+        overdueDays30: 0,
+        lastUpdated: new Date(response.data.lastUpdated),
+      },
     })
   },
   addCustomer: async (input) => {
@@ -148,19 +181,9 @@ export const useUdhaarStore = create<State>((set, get) => ({
       return { error: 'Enter an amount up to the current outstanding balance.' }
     }
 
-    const link: PaymentLinkDraft = {
-      id: `payment-link-${crypto.randomUUID()}`,
-      merchantId: 'merchant-001',
-      customerId,
-      amount,
-      url: `https://rzp.io/i/udhaar-${customerId.slice(-3)}-${amount}`,
-      provider: 'mock',
-      status: 'draft',
-      createdAt: new Date(),
-    }
-
-    set((state) => ({ paymentLinks: [link, ...state.paymentLinks] }))
-    return link
+    return {
+      error: 'Payment link generation is not enabled yet. Razorpay integration will be added in the next phase.',
+    } as { error: string }
   },
   createReminder: (input) => {
     const reminder: CollectionReminder = {

@@ -26,7 +26,7 @@ def list_ledger_entries():
 
 @ledger_bp.get("/ledger/<entry_id>")
 def get_ledger_entry(entry_id):
-    entry = LedgerEntry.query.get(entry_id)
+    entry = db.session.get(LedgerEntry, entry_id)
     if not entry:
         return failure_response("Ledger entry not found", {"entryId": entry_id}, 404)
     return success_response(entry.to_dict())
@@ -57,7 +57,7 @@ def create_ledger_entry():
 
 @ledger_bp.put("/ledger/<entry_id>")
 def update_ledger_entry(entry_id):
-    entry = LedgerEntry.query.get(entry_id)
+    entry = db.session.get(LedgerEntry, entry_id)
     if not entry:
         return failure_response("Ledger entry not found", {"entryId": entry_id}, 404)
 
@@ -78,7 +78,7 @@ def update_ledger_entry(entry_id):
 
 @ledger_bp.delete("/ledger/<entry_id>")
 def delete_ledger_entry(entry_id):
-    entry = LedgerEntry.query.get(entry_id)
+    entry = db.session.get(LedgerEntry, entry_id)
     if not entry:
         return failure_response("Ledger entry not found", {"entryId": entry_id}, 404)
     db.session.delete(entry)

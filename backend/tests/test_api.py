@@ -2,6 +2,7 @@ import pytest
 
 from app import create_app
 from app.extensions import db
+from app.services.merchant_service import MerchantService
 
 
 @pytest.fixture
@@ -14,15 +15,21 @@ def client():
 
     with app.app_context():
         db.create_all()
+        MerchantService.ensure_default_merchant()
         yield app.test_client()
         db.session.remove()
         db.drop_all()
 
 
-def test_customer_crud(client):
+def test_customer_crud_and_balance(client):
+    merchant_response = client.get("/api/merchants")
+    assert merchant_response.status_code == 200
+    merchants = merchant_response.get_json()["data"]
+    assert any(merchant["id"] == "merchant-001" for merchant in merchants)
+
     response = client.post(
         "/api/customers",
-        json={"name": "Ramesh General Store", "phone": "9876543210"},
+        json={"name": "Ramesh General Store", "phone": "9876543210", "email": "ramesh@example.com"},
     )
     assert response.status_code == 201
     customer = response.get_json()["data"]
@@ -38,6 +45,30 @@ def test_customer_crud(client):
     assert detail_response.status_code == 200
     assert detail_response.get_json()["data"]["id"] == customer["id"]
 
+    credit_response = client.post(
+        f"/api/customers/{customer['id']}/ledger",
+        json={"type": "credit", "amount": 25000, "description": "Wholesale order", "transactionDate": "2026-08-01", "dueDate": "2026-08-15"},
+    )
+    assert credit_response.status_code == 201
+
+    payment_response = client.post(
+        f"/api/customers/{customer['id']}/ledger",
+        json={"type": "payment", "amount": 8000, "description": "Partial payment", "transactionDate": "2026-08-10"},
+    )
+    assert payment_response.status_code == 201
+
+    balance = client.get(f"/api/customers/{customer['id']}/balance")
+    assert balance.status_code == 200
+    payload = balance.get_json()["data"]
+    assert payload["total_credit"] == 25000
+    assert payload["total_payment"] == 8000
+    assert payload["outstanding_balance"] == 17000
+    assert payload["customer_status"] in {"active", "overdue", "settled"}
+
+    ledger_response = client.get(f"/api/customers/{customer['id']}/ledger")
+    assert ledger_response.status_code == 200
+    assert len(ledger_response.get_json()["data"]) == 2
+
     update_response = client.put(
         f"/api/customers/{customer['id']}",
         json={"name": "Ramesh Stores", "phone": "9876543211", "email": "ramesh@example.com"},
@@ -50,7 +81,7 @@ def test_customer_crud(client):
     assert delete_response.get_json()["success"] is True
 
 
-def test_ledger_and_balance(client):
+def test_overdue_status_and_dashboard_metrics(client):
     customer_response = client.post(
         "/api/customers",
         json={"name": "Anita Traders", "phone": "9812345678"},
@@ -58,24 +89,53 @@ def test_ledger_and_balance(client):
     customer_id = customer_response.get_json()["data"]["id"]
 
     credit = client.post(
-        "/api/customers/{}/ledger".format(customer_id),
-        json={"type": "credit", "amount": 25000, "description": "Wholesale order"},
+        f"/api/customers/{customer_id}/ledger",
+        json={"type": "credit", "amount": 10000, "description": "Monthly stock", "transactionDate": "2024-01-01", "dueDate": "2024-01-15"},
     )
     assert credit.status_code == 201
 
-    payment = client.post(
-        "/api/customers/{}/ledger".format(customer_id),
-        json={"type": "payment", "amount": 8000, "description": "Partial payment"},
+    status_response = client.get(f"/api/customers/{customer_id}/balance")
+    assert status_response.status_code == 200
+    assert status_response.get_json()["data"]["customer_status"] == "overdue"
+
+    dashboard = client.get("/api/dashboard")
+    assert dashboard.status_code == 200
+    payload = dashboard.get_json()["data"]
+    assert payload["totalCustomers"] >= 1
+    assert payload["totalOutstandingBalance"] >= 10000
+    assert payload["overdueAmount"] >= 10000
+
+
+def test_payment_and_collection_recording(client):
+    customer_response = client.post(
+        "/api/customers",
+        json={"name": "Patel Electricals", "phone": "9988776655"},
     )
-    assert payment.status_code == 201
+    customer_id = customer_response.get_json()["data"]["id"]
 
-    balance = client.get(f"/api/customers/{customer_id}/balance")
-    assert balance.status_code == 200
-    payload = balance.get_json()["data"]
-    assert payload["total_credit"] == 25000
-    assert payload["total_payment"] == 8000
-    assert payload["outstanding_balance"] == 17000
+    client.post(
+        f"/api/customers/{customer_id}/ledger",
+        json={"type": "credit", "amount": 10000, "description": "Repair contract", "transactionDate": "2026-09-01", "dueDate": "2026-09-15"},
+    )
 
-    ledger_response = client.get(f"/api/customers/{customer_id}/ledger")
-    assert ledger_response.status_code == 200
-    assert len(ledger_response.get_json()["data"]) == 2
+    payment_response = client.post(
+        "/api/payments",
+        json={"customerId": customer_id, "amount": 5000, "currency": "INR", "status": "completed", "provider": "internal"},
+    )
+    assert payment_response.status_code == 201
+
+    link_response = client.post(
+        "/api/payment-links",
+        json={"customerId": customer_id, "amount": 2500, "currency": "INR", "provider": "internal", "status": "draft"},
+    )
+    assert link_response.status_code == 201
+
+    event_response = client.post(
+        "/api/collection-events",
+        json={"customerId": customer_id, "eventType": "reminder_generated", "channel": "whatsapp", "status": "scheduled"},
+    )
+    assert event_response.status_code == 201
+
+    assert client.get("/api/payments").status_code == 200
+    assert client.get("/api/payment-links").status_code == 200
+    assert client.get("/api/collection-events").status_code == 200

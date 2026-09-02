@@ -70,7 +70,19 @@ export type BalanceApi = {
   total_payment: number
   total_adjustment: number
   outstanding_balance: number
+  customer_status?: 'active' | 'overdue' | 'settled'
+  days_overdue?: number
   last_updated: string
+}
+
+export type DashboardMetricsApi = {
+  totalCustomers: number
+  totalOutstandingBalance: number
+  totalCollected: number
+  averageBalance: number
+  overdueAmount: number
+  overdueCustomerCount: number
+  lastUpdated: string
 }
 
 export const api = {
@@ -85,7 +97,8 @@ export const api = {
   createLedgerEntry: (customerId: string, payload: { type: 'credit' | 'payment' | 'adjustment'; amount: number; description?: string; currency?: string }) =>
     request<LedgerApi>(`/customers/${customerId}/ledger`, { method: 'POST', body: JSON.stringify(payload) }),
   getBalance: (customerId: string) => request<BalanceApi>(`/customers/${customerId}/balance`),
-  listLedger: () => request<LedgerApi>('/ledger'),
+  listLedger: () => request<LedgerApi[]>('/ledger'),
+  listDashboard: () => request<DashboardMetricsApi>('/dashboard'),
 }
 
 export function toCustomerModel(data: CustomerApi) {

@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from flask import current_app
+
 from app.extensions import db
 from app.models.customer import Customer
 
@@ -27,7 +29,6 @@ class CustomerService:
             raise ValidationError("Customer phone is required", {"phone": "required"})
         if len(phone) < 10:
             raise ValidationError("Phone number must be at least 10 digits", {"phone": "min_length"})
-
         if email and "@" not in email:
             raise ValidationError("Email is invalid", {"email": "invalid"})
 
@@ -39,23 +40,31 @@ class CustomerService:
         }
 
     @staticmethod
-    def list_customers():
-        return Customer.query.order_by(Customer.created_at.desc()).all()
+    def list_customers(merchant_id=None):
+        query = Customer.query
+        if merchant_id:
+            query = query.filter_by(merchant_id=merchant_id)
+        return query.order_by(Customer.created_at.desc()).all()
 
     @staticmethod
     def get_customer(customer_id):
-        return Customer.query.get(customer_id)
+        return db.session.get(Customer, customer_id)
+
+    @staticmethod
+    def default_merchant_id():
+        return current_app.config.get("DEFAULT_MERCHANT_ID", "merchant-001")
 
     @staticmethod
     def create_customer(payload):
         data = CustomerService.validate_payload(payload)
+        merchant_id = payload.get("merchantId") or CustomerService.default_merchant_id()
 
-        existing = Customer.query.filter_by(phone=data["phone"]).first()
+        existing = Customer.query.filter_by(merchant_id=merchant_id, phone=data["phone"]).first()
         if existing:
-            raise ValidationError("A customer with this phone number already exists", {"phone": "duplicate"})
+            raise ValidationError("A customer with this phone number already exists in this merchant", {"phone": "duplicate"})
 
         customer = Customer(
-            merchant_id=payload.get("merchantId") or "merchant-001",
+            merchant_id=merchant_id,
             name=data["name"],
             phone=data["phone"],
             email=data["email"],
@@ -70,16 +79,15 @@ class CustomerService:
 
     @staticmethod
     def update_customer(customer_id, payload):
-        customer = Customer.query.get(customer_id)
+        customer = db.session.get(Customer, customer_id)
         if not customer:
             raise LookupError("Customer not found")
 
         data = CustomerService.validate_payload({**customer.to_dict(), **(payload or {})})
-
         if payload.get("phone") and payload.get("phone") != customer.phone:
-            duplicate = Customer.query.filter(Customer.phone == data["phone"], Customer.id != customer_id).first()
+            duplicate = Customer.query.filter(Customer.merchant_id == customer.merchant_id, Customer.phone == data["phone"], Customer.id != customer_id).first()
             if duplicate:
-                raise ValidationError("A customer with this phone number already exists", {"phone": "duplicate"})
+                raise ValidationError("A customer with this phone number already exists in this merchant", {"phone": "duplicate"})
 
         customer.name = data["name"]
         customer.phone = data["phone"]
@@ -93,7 +101,7 @@ class CustomerService:
 
     @staticmethod
     def delete_customer(customer_id):
-        customer = Customer.query.get(customer_id)
+        customer = db.session.get(Customer, customer_id)
         if not customer:
             raise LookupError("Customer not found")
         db.session.delete(customer)
