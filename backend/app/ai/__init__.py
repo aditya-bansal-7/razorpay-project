@@ -13,8 +13,10 @@ Quick start::
 
 from .base import AIProvider
 from .factory import get_ai_provider
+from .strategist import AICollectionStrategist
 
 __all__ = [
     "AIProvider",
     "get_ai_provider",
+    "AICollectionStrategist",
 ]

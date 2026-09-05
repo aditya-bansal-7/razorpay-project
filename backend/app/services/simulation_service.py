@@ -178,17 +178,53 @@ class SimulationService:
                 action, score, confidence, reason = "SEND_REMINDER", None, None, "Baseline targets every overdue customer with one reminder."
                 target_amount = Decimal(str(customer["outstandingAmount"]))
                 selected_action = next(item for item in action_evaluation["actions"] if item["action"] == action)
+                expected_recovery_val = selected_action["expectedRecovery"]
+                probability = selected_action["probability"]
+            elif strategy == "ai":
+                from app.ai.config import AIConfig
+                from app.ai.providers.simulation import SimulationAIProvider
+                from app.ai.strategist import AICollectionStrategist
+                
+                sim_provider = SimulationAIProvider(AIConfig(
+                    api_key="sim-key", model_name="sim-model", timeout=10, enabled=True
+                ))
+                # Strip hidden variables before passing to AI
+                clean_metrics = {
+                    k: v for k, v in customer.items() 
+                    if k not in ("profile", "responseDraw", "scenarioId", "behaviorProfile", "id", "timeline", "collectionEvents", "transactions")
+                }
+                decision = AICollectionStrategist.recommend_action(
+                    customer_id=customer["id"], metrics=clean_metrics, provider=sim_provider
+                )
+                action = decision["action"]
+                confidence = decision["confidence"]
+                reason = decision["reason"]
+                target_amount = Decimal(str(decision["recommendedAmount"]))
+                expected_recovery_val = decision["expectedRecovery"]
+                
+                # We need the probability from the deterministic engine to simulate response
+                if action == "WAIT":
+                    probability = 0
+                    score = 0
+                else:
+                    det_action = next(item for item in action_evaluation["actions"] if item["action"] == action)
+                    probability = det_action["probability"]
+                    score = det_action["priorityScore"]
+                    
+                if action == "WAIT":
+                    continue
             else:
                 selected_action = action_evaluation["selected"]
                 action, score, confidence, reason = selected_action["action"], selected_action["priorityScore"], selected_action["confidence"], selected_action["reason"]
                 if action == "WAIT":
                     continue
                 target_amount = Decimal(str(selected_action["expectedAmount"]))
+                expected_recovery_val = selected_action["expectedRecovery"]
+                probability = selected_action["probability"]
             targeted += 1
             amount_targeted += target_amount
-            expected_recovery += Decimal(str(selected_action["expectedRecovery"]))
+            expected_recovery += Decimal(str(expected_recovery_val))
             action_counts[action] = action_counts.get(action, 0) + 1
-            probability = selected_action["probability"]
             recovered = Decimal("0")
             if customer["responseDraw"] < probability:
                 recovery_fraction = Decimal("0.25") if customer["profile"] == "partial_payer" and action != "OFFER_PARTIAL" else Decimal("1")
@@ -200,7 +236,7 @@ class SimulationService:
                 "action": action,
                 "targetedAmount": SimulationService._money(target_amount),
                 "recoveredAmount": SimulationService._money(recovered),
-                "expectedRecovery": selected_action["expectedRecovery"],
+                "expectedRecovery": expected_recovery_val,
                 "responseDraw": customer["responseDraw"],
                 "profile": customer["profile"],
                 "priority": SimulationService._priority(score) if score is not None else "baseline",
@@ -304,40 +340,90 @@ class SimulationService:
         }
 
     @staticmethod
-    def evaluate_seeds(seeds, customer_count=DEFAULT_COUNT, as_of=None, materially_worse_threshold=0.10):
+    def evaluate_seeds(seeds, customer_count=DEFAULT_COUNT, as_of=None, materially_worse_threshold=0.10, strategies=None):
         if not seeds:
             raise SimulationValidationError("At least one seed is required")
         if customer_count < 1 or customer_count > SimulationService.MAX_COUNT:
             raise SimulationValidationError(f"customerCount must be between 1 and {SimulationService.MAX_COUNT}")
         if materially_worse_threshold < 0 or materially_worse_threshold > 1:
             raise SimulationValidationError("materiallyWorseThreshold must be between 0 and 1")
+        strategies = strategies or ["baseline", "collectionRules", "ai"]
         as_of = as_of or SimulationService.DEFAULT_AS_OF
         per_seed = []
         for seed in seeds:
             dataset = SimulationService.generate_dataset(int(seed), customer_count, as_of)
-            baseline = SimulationService._evaluate_strategy(dataset, "baseline")
-            rules = SimulationService._evaluate_strategy(dataset, "collection_rules")
-            baseline_amount = baseline["amountRecovered"]
-            rules_amount = rules["amountRecovered"]
-            uplift_amount = SimulationService._money(Decimal(str(rules_amount)) - Decimal(str(baseline_amount)))
-            uplift_rate = SimulationService._money(uplift_amount / baseline_amount if baseline_amount else 0)
-            per_seed.append({
+            seed_result = {
                 "seed": int(seed),
                 "customerCount": customer_count,
-                "baseline": {key: baseline[key] for key in ("customersTargeted", "collectionActions", "amountTargeted", "amountRecovered", "expectedRecovery", "recoveryRate", "recoveryPerAction", "actionCounts")},
-                "collectionRules": {key: rules[key] for key in ("customersTargeted", "collectionActions", "amountTargeted", "amountRecovered", "recoveryRate", "recoveryPerAction", "actionCounts", "expectedRecovery")},
-                "uplift": {"amount": uplift_amount, "rate": uplift_rate, "recoveryRateDelta": SimulationService._money(Decimal(str(rules["recoveryRate"])) - Decimal(str(baseline["recoveryRate"])))},
-            })
+            }
+            if "baseline" in strategies:
+                baseline = SimulationService._evaluate_strategy(dataset, "baseline")
+                seed_result["baseline"] = {key: baseline[key] for key in ("customersTargeted", "collectionActions", "amountTargeted", "amountRecovered", "expectedRecovery", "recoveryRate", "recoveryPerAction", "actionCounts")}
+            if "collectionRules" in strategies:
+                rules = SimulationService._evaluate_strategy(dataset, "collection_rules")
+                seed_result["collectionRules"] = {key: rules[key] for key in ("customersTargeted", "collectionActions", "amountTargeted", "amountRecovered", "recoveryRate", "recoveryPerAction", "actionCounts", "expectedRecovery")}
+            if "ai" in strategies:
+                ai_strat = SimulationService._evaluate_strategy(dataset, "ai")
+                seed_result["ai"] = {key: ai_strat[key] for key in ("customersTargeted", "collectionActions", "amountTargeted", "amountRecovered", "recoveryRate", "recoveryPerAction", "actionCounts", "expectedRecovery")}
+            
+            uplift_info = {}
+            if "baseline" in strategies and "collectionRules" in strategies:
+                baseline_amount = baseline["amountRecovered"]
+                rules_amount = rules["amountRecovered"]
+                uplift_amount = SimulationService._money(Decimal(str(rules_amount)) - Decimal(str(baseline_amount)))
+                uplift_rate = SimulationService._money(uplift_amount / baseline_amount if baseline_amount else 0)
+                uplift_info["rules_vs_baseline"] = {"amount": uplift_amount, "rate": uplift_rate, "recoveryRateDelta": SimulationService._money(Decimal(str(rules["recoveryRate"])) - Decimal(str(baseline["recoveryRate"])))}
+            
+            if "baseline" in strategies and "ai" in strategies:
+                baseline_amount = baseline["amountRecovered"]
+                ai_amount = ai_strat["amountRecovered"]
+                uplift_amount = SimulationService._money(Decimal(str(ai_amount)) - Decimal(str(baseline_amount)))
+                uplift_rate = SimulationService._money(uplift_amount / baseline_amount if baseline_amount else 0)
+                uplift_info["ai_vs_baseline"] = {"amount": uplift_amount, "rate": uplift_rate, "recoveryRateDelta": SimulationService._money(Decimal(str(ai_strat["recoveryRate"])) - Decimal(str(baseline["recoveryRate"])))}
+                
+            if "collectionRules" in strategies and "ai" in strategies:
+                rules_amount = rules["amountRecovered"]
+                ai_amount = ai_strat["amountRecovered"]
+                uplift_amount = SimulationService._money(Decimal(str(ai_amount)) - Decimal(str(rules_amount)))
+                uplift_rate = SimulationService._money(uplift_amount / rules_amount if rules_amount else 0)
+                uplift_info["ai_vs_rules"] = {"amount": uplift_amount, "rate": uplift_rate, "recoveryRateDelta": SimulationService._money(Decimal(str(ai_strat["recoveryRate"])) - Decimal(str(rules["recoveryRate"])))}
+                
+            seed_result["uplift"] = uplift_info
+            per_seed.append(seed_result)
+
         metric_names = ("amountRecovered", "recoveryRate", "recoveryPerAction", "customersTargeted", "expectedRecovery")
         strategy_stats = {}
-        for strategy in ("baseline", "collectionRules"):
+        for strategy in strategies:
             strategy_stats[strategy] = {metric: SimulationService._summary([result[strategy][metric] for result in per_seed]) for metric in metric_names}
-        uplift_stats = {metric: SimulationService._summary([result["uplift"][metric] for result in per_seed]) for metric in ("amount", "rate", "recoveryRateDelta")}
-        materially_worse = [
-            result["seed"] for result in per_seed
-            if result["baseline"]["amountRecovered"] > 0
-            and result["collectionRules"]["amountRecovered"] < result["baseline"]["amountRecovered"] * (1 - materially_worse_threshold)
-        ]
+        
+        uplift_stats = {}
+        if "baseline" in strategies and "collectionRules" in strategies:
+            uplift_stats["rules_vs_baseline"] = {metric: SimulationService._summary([result["uplift"]["rules_vs_baseline"][metric] for result in per_seed]) for metric in ("amount", "rate", "recoveryRateDelta")}
+        if "baseline" in strategies and "ai" in strategies:
+            uplift_stats["ai_vs_baseline"] = {metric: SimulationService._summary([result["uplift"]["ai_vs_baseline"][metric] for result in per_seed]) for metric in ("amount", "rate", "recoveryRateDelta")}
+        if "collectionRules" in strategies and "ai" in strategies:
+            uplift_stats["ai_vs_rules"] = {metric: SimulationService._summary([result["uplift"]["ai_vs_rules"][metric] for result in per_seed]) for metric in ("amount", "rate", "recoveryRateDelta")}
+
+        materially_worse = []
+        for result in per_seed:
+            baseline_amt = result.get("baseline", {}).get("amountRecovered", 0)
+            rules_amt = result.get("collectionRules", {}).get("amountRecovered", 0)
+            ai_amt = result.get("ai", {}).get("amountRecovered", 0)
+            
+            flag = False
+            if "baseline" in strategies and "collectionRules" in strategies:
+                if baseline_amt > 0 and rules_amt < baseline_amt * (1 - materially_worse_threshold):
+                    flag = True
+            if "baseline" in strategies and "ai" in strategies:
+                if baseline_amt > 0 and ai_amt < baseline_amt * (1 - materially_worse_threshold):
+                    flag = True
+            if "collectionRules" in strategies and "ai" in strategies:
+                if rules_amt > 0 and ai_amt < rules_amt * (1 - materially_worse_threshold):
+                    flag = True
+            
+            if flag:
+                materially_worse.append(result["seed"])
+
         return {
             "seedCount": len(per_seed),
             "seeds": [result["seed"] for result in per_seed],

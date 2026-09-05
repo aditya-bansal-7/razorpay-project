@@ -392,10 +392,15 @@ def test_multi_seed_simulation_evaluation_is_reproducible(client):
     result = first.get_json()["data"]
     assert result["seedCount"] == 20
     assert result["customerCount"] == 500
-    for strategy in ("baseline", "collectionRules"):
+    for strategy in ("baseline", "collectionRules", "ai"):
         for metric in ("amountRecovered", "recoveryRate", "recoveryPerAction", "customersTargeted"):
             assert set(result["strategies"][strategy][metric]) == {"mean", "median", "min", "max", "standardDeviation"}
-    assert set(result["uplift"]) == {"amount", "rate", "recoveryRateDelta"}
+            
+    assert set(result["uplift"]) == {"rules_vs_baseline", "ai_vs_baseline", "ai_vs_rules"}
+    for comparison in ("rules_vs_baseline", "ai_vs_baseline", "ai_vs_rules"):
+        assert set(result["uplift"][comparison]) == {"amount", "rate", "recoveryRateDelta"}
+        for metric in ("amount", "rate", "recoveryRateDelta"):
+            assert set(result["uplift"][comparison][metric]) == {"mean", "median", "min", "max", "standardDeviation"}
     assert len(result["perSeed"]) == 20
 
     second = client.post("/api/simulation/evaluate", json=payload)

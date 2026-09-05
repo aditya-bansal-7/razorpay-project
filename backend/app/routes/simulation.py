@@ -52,11 +52,18 @@ def evaluate_simulation():
             seeds = list(range(start_seed, start_seed + seed_count))
         customer_count = int(payload.get("customerCount", SimulationService.DEFAULT_COUNT))
         threshold = float(payload.get("materiallyWorseThreshold", 0.10))
+        strategies = payload.get("strategies", ["baseline", "collectionRules", "ai"])
+        if not isinstance(strategies, list):
+            raise SimulationValidationError("strategies must be a list of strings")
+            
         as_of = SimulationService.DEFAULT_AS_OF
         if payload.get("asOfDate"):
             from datetime import date
             as_of = date.fromisoformat(str(payload["asOfDate"]))
-        results = SimulationService.evaluate_seeds(seeds, customer_count, as_of, threshold)
+            
+        results = SimulationService.evaluate_seeds(
+            seeds, customer_count, as_of, threshold, strategies
+        )
     except (TypeError, ValueError, SimulationValidationError) as exc:
         return failure_response(str(exc), status_code=400)
     return success_response(results)
