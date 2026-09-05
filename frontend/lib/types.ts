@@ -89,7 +89,7 @@ export interface CollectionTask {
   ledgerEntryId?: string
   action: 'SEND_REMINDER' | 'OFFER_PARTIAL' | 'ESCALATE' | 'WAIT'
   priority: 'low' | 'medium' | 'high' | 'critical'
-  status: 'pending' | 'approved' | 'rejected' | 'completed'
+  status: 'pending' | 'executing' | 'executed' | 'failed' | 'approved' | 'rejected' | 'completed'
   reason: string
   confidence: number
   recommendedAmount: number
@@ -105,6 +105,10 @@ export interface CollectionTask {
   }
   createdAt: Date
   updatedAt: Date
+  paymentLinkId?: string
+  paymentLinkUrl?: string
+  executionError?: string
+  executedAt?: Date
 }
 
 /**

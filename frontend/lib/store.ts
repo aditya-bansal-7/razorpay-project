@@ -25,8 +25,8 @@ type State = {
   refreshLedger: () => Promise<void>
   refreshDashboard: () => Promise<void>
   refreshCollectionQueue: () => Promise<void>
-  approveCollectionTask: (taskId: string) => Promise<string | null>
-  rejectCollectionTask: (taskId: string) => Promise<string | null>
+  approveCollectionTask: (taskId: string) => Promise<{ task?: CollectionTask; error?: string }>
+  rejectCollectionTask: (taskId: string) => Promise<{ task?: CollectionTask; error?: string }>
   addCustomer: (input: CustomerInput) => Promise<Customer | { error: string }>
   addLedgerEntry: (input: LedgerInput) => Promise<{ entry?: LedgerEntry; error?: string }>
   createPaymentLink: (customerId: string, amount: number) => Promise<PaymentLinkDraft | { error: string }>
@@ -147,15 +147,17 @@ export const useUdhaarStore = create<State>((set, get) => ({
   },
   approveCollectionTask: async (taskId) => {
     const response = await api.approveCollectionTask(taskId)
-    if (response.error) return response.error
-    set((state) => ({ collectionTasks: state.collectionTasks.filter((task) => task.id !== taskId) }))
-    return null
+    if (response.error) return { error: response.error }
+    if (!response.data) return { error: 'Collection task execution returned no data.' }
+    const task = toCollectionTaskModel(response.data)
+    set((state) => ({ collectionTasks: state.collectionTasks.map((item) => item.id === taskId ? task : item) }))
+    return { task }
   },
   rejectCollectionTask: async (taskId) => {
     const response = await api.rejectCollectionTask(taskId)
-    if (response.error) return response.error
+    if (response.error) return { error: response.error }
     set((state) => ({ collectionTasks: state.collectionTasks.filter((task) => task.id !== taskId) }))
-    return null
+    return {}
   },
   addCustomer: async (input) => {
     const response = await api.createCustomer(input)

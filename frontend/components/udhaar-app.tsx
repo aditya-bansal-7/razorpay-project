@@ -667,15 +667,20 @@ function CollectionQueuePage() {
     const reject = useUdhaarStore((s) => s.rejectCollectionTask);
     const [selected, setSelected] = useState<(typeof tasks)[number] | null>(null);
     const [error, setError] = useState("");
+    const [executingTaskId, setExecutingTaskId] = useState<string | null>(null);
 
     useEffect(() => {
       void refresh();
     }, [refresh]);
 
     const updateTask = async (action: "approve" | "reject", taskId: string) => {
+      setError("");
+      if (action === "approve") setExecutingTaskId(taskId);
       const result = await (action === "approve" ? approve(taskId) : reject(taskId));
-      if (result) setError(result);
-      else setSelected(null);
+      setExecutingTaskId(null);
+      if (result.error) return setError(result.error);
+      if (result.task) return setSelected(result.task);
+      setSelected(null);
     };
 
     return (
@@ -702,6 +707,7 @@ function CollectionQueuePage() {
                 <th>Priority</th>
                 <th>Recommended amount</th>
                 <th>Confidence</th>
+                <th>Status</th>
                 <th />
               </tr>
             </thead>
@@ -715,6 +721,7 @@ function CollectionQueuePage() {
                   <td><span className={`status status-${task.priority}`}>{task.priority}</span></td>
                   <td>{money(task.recommendedAmount)}</td>
                   <td>{Math.round(task.confidence * 100)}%</td>
+                  <td><span className={`status status-${task.status}`}>{task.status}</span></td>
                   <td><button className="row-link" onClick={() => setSelected(task)}>Review</button></td>
                 </tr>
               ))}
@@ -730,6 +737,17 @@ function CollectionQueuePage() {
                 <button className="icon-btn" onClick={() => setSelected(null)} aria-label="Close"><X size={18} /></button>
               </div>
               <div className="detail-balance"><span>Recommended action</span><strong>{selected.action.replaceAll("_", " ")}</strong><p>{selected.reason}</p></div>
+              {selected.executionError && <p className="form-error">{selected.executionError}</p>}
+              {selected.paymentLinkUrl && (
+                <div className="link-preview">
+                  <span>Razorpay Payment Link</span>
+                  <strong>{selected.paymentLinkUrl}</strong>
+                  <div className="modal-actions">
+                    <button className="secondary-btn" onClick={() => void navigator.clipboard.writeText(selected.paymentLinkUrl as string)}>Copy Link</button>
+                    <button className="secondary-btn" onClick={() => window.open(selected.paymentLinkUrl, "_blank", "noopener,noreferrer")}>Open Link</button>
+                  </div>
+                </div>
+              )}
               <div className="balance-breakdown">
                 <div><span>Outstanding</span><strong>{money(selected.metrics.outstandingAmount)}</strong></div>
                 <div><span>Days overdue</span><strong>{selected.metrics.daysOverdue}</strong></div>
@@ -740,7 +758,7 @@ function CollectionQueuePage() {
               </div>
               <div className="modal-actions">
                 <button className="secondary-btn" onClick={() => void updateTask("reject", selected.id)}>Reject</button>
-                <button className="primary-btn" onClick={() => void updateTask("approve", selected.id)}>Approve</button>
+                <button className="primary-btn" disabled={executingTaskId === selected.id || selected.status !== "pending"} onClick={() => void updateTask("approve", selected.id)}>{executingTaskId === selected.id ? "Creating link..." : selected.status === "executed" ? "Link created" : "Approve"}</button>
               </div>
             </div>
           </div>

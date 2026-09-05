@@ -14,7 +14,7 @@ class RazorpayService:
         return razorpay.Client(auth=(key_id, key_secret))
 
     @staticmethod
-    def create_payment_link(customer, amount: Decimal, currency: str, accept_partial=False, first_min_partial_amount=None):
+    def create_payment_link(customer, amount: Decimal, currency: str, accept_partial=False, first_min_partial_amount=None, reference_id=None, notes=None):
         payload = {
             "amount": int(amount * 100) if currency == "INR" else int(amount),
             "currency": currency,
@@ -22,6 +22,10 @@ class RazorpayService:
             "customer": {"name": customer.name, "contact": customer.phone, "email": customer.email},
             "accept_partial": accept_partial,
         }
+        if reference_id:
+            payload["reference_id"] = reference_id
+        if notes:
+            payload["notes"] = {key: str(value) for key, value in notes.items() if value is not None}
         if accept_partial and first_min_partial_amount is not None:
             payload["first_min_partial_amount"] = int(Decimal(str(first_min_partial_amount)) * 100)
         return RazorpayService._client().payment_link.create(payload)

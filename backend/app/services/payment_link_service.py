@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from app.extensions import db
 from app.models.customer import Customer
+from app.models.collection_task import CollectionTask
 from app.models.ledger import LedgerEntry
 from app.models.payment import Payment
 from app.models.payment_link import PaymentLink
@@ -61,6 +62,25 @@ class PaymentLinkService:
         link.amount_paid = new_amount_paid
         link.amount_due = max(Decimal("0"), Decimal(str(link.amount)) - new_amount_paid)
         link.status = "completed" if link.amount_due == 0 else "active"
+        task = CollectionTask.query.filter_by(payment_link_id=provider_link_id).first()
+        if task:
+            balance = LedgerService.get_balance(task.customer_id)
+            if link.amount_due > 0:
+                from app.services.collection_task_service import CollectionTaskService
+
+                metrics = CollectionTaskService._metrics(task.customer)
+                action, confidence, reason, score = CollectionTaskService._recommendation(metrics)
+                task.action = action
+                task.priority = CollectionTaskService._priority(score)
+                task.reason = reason
+                task.confidence = confidence
+                task.priority_score = score
+                task.metrics = metrics
+            else:
+                task.metrics = {**(task.metrics or {}), "outstandingAmount": balance["outstanding_balance"], "daysOverdue": balance.get("days_overdue", 0), "customerStatus": balance.get("customer_status")}
+            task.recommended_amount = link.amount_due
+            task.status = "completed" if link.amount_due == 0 else "executed"
+            task.updated_at = datetime.utcnow()
         db.session.add(payment)
         db.session.commit()
         return link
@@ -115,6 +135,8 @@ class PaymentLinkService:
             currency=data["currency"],
             accept_partial=data["accept_partial"],
             first_min_partial_amount=data["first_min_partial_amount"],
+            reference_id=payload.get("referenceId"),
+            notes=payload.get("notes"),
         )
 
         payment_link = PaymentLink(

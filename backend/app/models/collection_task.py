@@ -20,9 +20,13 @@ class CollectionTask(db.Model):
     channel = db.Column(db.String(20), nullable=False, default="whatsapp")
     priority_score = db.Column(db.Numeric(precision=8, scale=2), nullable=False, default=0)
     metrics = db.Column(db.JSON, nullable=False, default=dict)
+    payment_link_id = db.Column(db.String(120), nullable=True)
+    payment_link_url = db.Column(db.String(255), nullable=True)
+    execution_error = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     approved_at = db.Column(db.DateTime, nullable=True)
+    executed_at = db.Column(db.DateTime, nullable=True)
     rejected_at = db.Column(db.DateTime, nullable=True)
 
     merchant = db.relationship("Merchant", back_populates="collection_tasks")
@@ -32,7 +36,7 @@ class CollectionTask(db.Model):
     __table_args__ = (
         db.CheckConstraint("action IN ('SEND_REMINDER','OFFER_PARTIAL','ESCALATE','WAIT')", name="collection_task_action_valid"),
         db.CheckConstraint("priority IN ('low','medium','high','critical')", name="collection_task_priority_valid"),
-        db.CheckConstraint("status IN ('pending','approved','rejected','completed')", name="collection_task_status_valid"),
+        db.CheckConstraint("status IN ('pending','executing','executed','failed','approved','rejected','completed')", name="collection_task_status_valid"),
         db.CheckConstraint("channel IN ('whatsapp','sms','email','manual')", name="collection_task_channel_valid"),
         db.CheckConstraint("confidence >= 0 AND confidence <= 1", name="collection_task_confidence_valid"),
         db.Index("ix_collection_task_customer_status", "customer_id", "status"),
@@ -54,8 +58,12 @@ class CollectionTask(db.Model):
             "channel": self.channel,
             "priorityScore": float(self.priority_score),
             "metrics": self.metrics or {},
+            "paymentLinkId": self.payment_link_id,
+            "paymentLinkUrl": self.payment_link_url,
+            "executionError": self.execution_error,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
             "approvedAt": self.approved_at.isoformat() if self.approved_at else None,
+            "executedAt": self.executed_at.isoformat() if self.executed_at else None,
             "rejectedAt": self.rejected_at.isoformat() if self.rejected_at else None,
         }

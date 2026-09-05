@@ -113,7 +113,7 @@ export type CollectionTaskApi = {
   ledgerEntryId?: string
   action: 'SEND_REMINDER' | 'OFFER_PARTIAL' | 'ESCALATE' | 'WAIT'
   priority: 'low' | 'medium' | 'high' | 'critical'
-  status: 'pending' | 'approved' | 'rejected' | 'completed'
+  status: 'pending' | 'executing' | 'executed' | 'failed' | 'approved' | 'rejected' | 'completed'
   reason: string
   confidence: number
   recommendedAmount: number
@@ -129,6 +129,10 @@ export type CollectionTaskApi = {
   }
   createdAt: string
   updatedAt: string
+  paymentLinkId?: string
+  paymentLinkUrl?: string
+  executionError?: string
+  executedAt?: string
 }
 
 export const api = {
@@ -201,5 +205,9 @@ export function toCollectionTaskModel(data: CollectionTaskApi) {
     metrics: data.metrics,
     createdAt: normalizeDate(data.createdAt),
     updatedAt: normalizeDate(data.updatedAt),
+    paymentLinkId: data.paymentLinkId,
+    paymentLinkUrl: data.paymentLinkUrl,
+    executionError: data.executionError,
+    executedAt: data.executedAt ? normalizeDate(data.executedAt) : undefined,
   }
 }

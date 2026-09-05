@@ -32,7 +32,7 @@ def create_app(test_config=None):
         supports_credentials=False,
     )
 
-    from .models import Customer, LedgerEntry, Merchant, Payment, PaymentLink, CollectionEvent, CollectionTask  # noqa: F401
+    from .models import Customer, LedgerEntry, Merchant, Payment, PaymentLink, CollectionEvent, CollectionTask, SimulationRun  # noqa: F401
     from .routes.customers import customers_bp
     from .routes.ledger import ledger_bp
     from .routes.merchant import merchant_bp
@@ -41,6 +41,7 @@ def create_app(test_config=None):
     from .routes.payment_links import payment_links_bp
     from .routes.collection_events import collection_events_bp
     from .routes.collections import collections_bp
+    from .routes.simulation import simulation_bp
     from .services.merchant_service import MerchantService
 
     app.register_blueprint(merchant_bp)
@@ -51,6 +52,7 @@ def create_app(test_config=None):
     app.register_blueprint(payment_links_bp)
     app.register_blueprint(collection_events_bp)
     app.register_blueprint(collections_bp)
+    app.register_blueprint(simulation_bp)
 
     with app.app_context():
         db.create_all()
@@ -73,6 +75,22 @@ def create_app(test_config=None):
                 if db.engine.dialect.name == "postgresql":
                     connection.execute(text("ALTER TABLE payment_links DROP CONSTRAINT IF EXISTS payment_link_status_valid"))
                     connection.execute(text("ALTER TABLE payment_links ADD CONSTRAINT payment_link_status_valid CHECK (status IN ('draft','issued','active','completed','expired','cancelled'))"))
+
+        if "collection_tasks" in tables:
+            task_columns = {column["name"] for column in inspector.get_columns("collection_tasks")}
+            with db.engine.begin() as connection:
+                additions = {
+                    "payment_link_id": "VARCHAR(120)",
+                    "payment_link_url": "VARCHAR(255)",
+                    "execution_error": "TEXT",
+                    "executed_at": "TIMESTAMP",
+                }
+                for column_name, column_type in additions.items():
+                    if column_name not in task_columns:
+                        connection.execute(text(f"ALTER TABLE collection_tasks ADD COLUMN {column_name} {column_type}"))
+                if db.engine.dialect.name == "postgresql":
+                    connection.execute(text("ALTER TABLE collection_tasks DROP CONSTRAINT IF EXISTS collection_task_status_valid"))
+                    connection.execute(text("ALTER TABLE collection_tasks ADD CONSTRAINT collection_task_status_valid CHECK (status IN ('pending','executing','executed','failed','approved','rejected','completed'))"))
 
         if "merchants" not in tables:
             db.create_all()

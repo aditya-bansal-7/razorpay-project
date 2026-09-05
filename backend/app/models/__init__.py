@@ -5,6 +5,7 @@ from .payment import Payment
 from .payment_link import PaymentLink
 from .collection_event import CollectionEvent
 from .collection_task import CollectionTask
+from .simulation_run import SimulationRun
 
 __all__ = [
     "Merchant",
@@ -14,4 +15,5 @@ __all__ = [
     "PaymentLink",
     "CollectionEvent",
     "CollectionTask",
+    "SimulationRun",
 ]

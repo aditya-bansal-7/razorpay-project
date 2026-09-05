@@ -1,7 +1,12 @@
+import hashlib
+import hmac
+import json
+
 import pytest
 
 from app import create_app
 from app.extensions import db
+from app.models.collection_task import CollectionTask
 from app.services.merchant_service import MerchantService
 from app.services.razorpay_service import RazorpayService
 
@@ -167,7 +172,18 @@ def test_payment_and_collection_recording(client, monkeypatch):
     assert client.get("/api/collection-events").status_code == 200
 
 
-def test_collection_queue_rules_and_task_lifecycle(client):
+def test_collection_queue_rules_and_task_lifecycle(client, monkeypatch):
+    provider_args = {}
+
+    def fake_create_payment_link(**kwargs):
+        provider_args.update(kwargs)
+        return {"id": "plink_task", "short_url": "https://rzp.io/i/task", "expire_by": None}
+
+    monkeypatch.setattr(
+        RazorpayService,
+        "create_payment_link",
+        fake_create_payment_link,
+    )
     customer_response = client.post(
         "/api/customers",
         json={"name": "Overdue Wholesale", "phone": "9000012345"},
@@ -200,8 +216,117 @@ def test_collection_queue_rules_and_task_lifecycle(client):
 
     approve_response = client.post(f"/api/collections/{task['id']}/approve")
     assert approve_response.status_code == 200
-    assert approve_response.get_json()["data"]["status"] == "approved"
+    assert approve_response.get_json()["data"]["status"] == "executed"
+    assert approve_response.get_json()["data"]["paymentLinkUrl"] == "https://rzp.io/i/task"
+    assert provider_args["reference_id"] == task["id"]
+    assert provider_args["notes"]["customer_id"] == customer_id
 
     reject_response = client.post(f"/api/collections/{task['id']}/reject")
-    assert reject_response.status_code == 200
-    assert reject_response.get_json()["data"]["status"] == "rejected"
+    assert reject_response.status_code == 409
+
+    duplicate_approval = client.post(f"/api/collections/{task['id']}/approve")
+    assert duplicate_approval.status_code == 409
+
+
+def test_collection_task_send_reminder_and_offer_partial(client, monkeypatch):
+    calls = []
+
+    def fake_create_payment_link(**kwargs):
+        calls.append(kwargs)
+        return {"id": f"plink-{len(calls)}", "short_url": f"https://rzp.io/i/{len(calls)}", "expire_by": None}
+
+    monkeypatch.setattr(RazorpayService, "create_payment_link", fake_create_payment_link)
+
+    reminder_customer = client.post("/api/customers", json={"name": "Reminder Customer", "phone": "9000011111"}).get_json()["data"]["id"]
+    client.post(f"/api/customers/{reminder_customer}/ledger", json={"type": "credit", "amount": 5000, "dueDate": "2026-09-01"})
+    reminder_task = client.get("/api/collections/queue").get_json()["data"][-1]
+    assert reminder_task["action"] == "SEND_REMINDER"
+    assert client.post(f"/api/collections/{reminder_task['id']}/approve").status_code == 200
+    assert calls[-1]["accept_partial"] is False
+    assert calls[-1]["amount"] == pytest.approx(5000)
+
+    partial_customer = client.post("/api/customers", json={"name": "Partial Customer", "phone": "9000022222"}).get_json()["data"]["id"]
+    client.post(f"/api/customers/{partial_customer}/ledger", json={"type": "credit", "amount": 10000, "dueDate": "2099-01-01"})
+    client.post(f"/api/customers/{partial_customer}/ledger", json={"type": "payment", "amount": 1000})
+    client.post(f"/api/customers/{partial_customer}/ledger", json={"type": "payment", "amount": 1000})
+    partial_tasks = client.get("/api/collections/queue").get_json()["data"]
+    partial_task = next(task for task in partial_tasks if task["customerId"] == partial_customer)
+    assert partial_task["action"] == "OFFER_PARTIAL"
+    assert client.post(f"/api/collections/{partial_task['id']}/approve").status_code == 200
+    assert calls[-1]["accept_partial"] is True
+    assert calls[-1]["first_min_partial_amount"] == pytest.approx(partial_task["recommendedAmount"])
+
+
+def test_collection_task_provider_failure_is_persisted(client, monkeypatch):
+    customer_id = client.post("/api/customers", json={"name": "Failed Link", "phone": "9000033333"}).get_json()["data"]["id"]
+    client.post(f"/api/customers/{customer_id}/ledger", json={"type": "credit", "amount": 3000, "dueDate": "2026-08-01"})
+    task = next(task for task in client.get("/api/collections/queue").get_json()["data"] if task["customerId"] == customer_id)
+    monkeypatch.setattr(RazorpayService, "create_payment_link", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("provider unavailable")))
+    response = client.post(f"/api/collections/{task['id']}/approve")
+    assert response.status_code == 502
+    assert response.get_json()["error"] == "Razorpay payment link creation failed"
+    assert response.get_json()["details"]["status"] == "failed"
+    assert "provider unavailable" in response.get_json()["details"]["executionError"]
+    with client.application.app_context():
+        failed = db.session.get(CollectionTask, task["id"])
+        assert failed.status == "failed"
+        assert "provider unavailable" in failed.execution_error
+
+
+def test_collection_task_webhook_partial_and_full_payment(client, monkeypatch):
+    secret = "test-webhook-secret"
+    monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", secret)
+    customer_id = client.post("/api/customers", json={"name": "Webhook Customer", "phone": "9000044444"}).get_json()["data"]["id"]
+    client.post(f"/api/customers/{customer_id}/ledger", json={"type": "credit", "amount": 10000, "dueDate": "2026-08-01"})
+    monkeypatch.setattr(RazorpayService, "create_payment_link", lambda **kwargs: {"id": "plink_webhook", "short_url": "https://rzp.io/i/webhook", "expire_by": None})
+    task = next(task for task in client.get("/api/collections/queue").get_json()["data"] if task["customerId"] == customer_id)
+    assert client.post(f"/api/collections/{task['id']}/approve").status_code == 200
+
+    def post_webhook(payment_id, amount_paid):
+        payload = {"event": "payment_link.partially_paid" if amount_paid < 1000000 else "payment_link.paid", "payload": {"payment_link": {"entity": {"id": "plink_webhook", "amount_paid": amount_paid}}, "payment": {"entity": {"id": payment_id}}}}
+        body = json.dumps(payload).encode()
+        signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        return client.post("/api/webhooks/razorpay", data=body, content_type="application/json", headers={"X-Razorpay-Signature": signature})
+
+    partial = post_webhook("pay_partial", 300000)
+    assert partial.status_code == 200
+    assert partial.get_json()["data"]["paymentLink"]["status"] == "active"
+    assert client.get(f"/api/customers/{customer_id}/balance").get_json()["data"]["outstanding_balance"] == 7000
+    full = post_webhook("pay_full", 1000000)
+    assert full.status_code == 200
+    assert full.get_json()["data"]["paymentLink"]["status"] == "completed"
+    assert client.get(f"/api/customers/{customer_id}/balance").get_json()["data"]["outstanding_balance"] == 0
+
+
+def test_simulation_generate_run_and_reproducibility(client):
+    generate = client.post("/api/simulation/generate", json={"seed": 77, "customerCount": 50})
+    assert generate.status_code == 201
+    generated = generate.get_json()["data"]
+    assert generated["customerCount"] == 50
+    assert generated["seed"] == 77
+    assert generated["status"] == "generated"
+
+    run = client.post("/api/simulation/run", json={"runId": generated["id"]})
+    assert run.status_code == 200
+    result = run.get_json()["data"]
+    assert result["status"] == "completed"
+    assert result["results"]["baseline"]["customersTargeted"] >= result["results"]["collectionRules"]["customersTargeted"]
+    assert "amountRecovered" in result["results"]["baseline"]
+    assert "recoveryPerAction" in result["results"]["collectionRules"]
+    assert "uplift" in result["results"]
+
+    stored = client.get(f"/api/simulation/results/{generated['id']}")
+    assert stored.status_code == 200
+    assert stored.get_json()["data"]["results"] == result["results"]
+
+    second = client.post("/api/simulation/generate", json={"seed": 77, "customerCount": 50})
+    second_run = client.post("/api/simulation/run", json={"id": second.get_json()["data"]["id"]})
+    first_reproducible = {key: value for key, value in result["results"].items() if key != "runId"}
+    second_reproducible = {key: value for key, value in second_run.get_json()["data"]["results"].items() if key != "runId"}
+    assert second_reproducible == first_reproducible
+
+
+def test_simulation_validates_customer_count(client):
+    response = client.post("/api/simulation/generate", json={"customerCount": 0})
+    assert response.status_code == 400
+    assert "customerCount" in response.get_json()["error"]
