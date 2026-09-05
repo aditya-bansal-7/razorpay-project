@@ -32,6 +32,8 @@ export interface LedgerEntry {
   amount: number
   currency: string
   description: string
+  transactionDate?: Date
+  dueDate?: Date
   createdAt: Date
   updatedAt: Date
 }
@@ -63,7 +65,7 @@ export interface PaymentLinkDraft {
   customerId: string
   amount: number
   url: string
-  provider: 'mock' | 'razorpay'
+  provider: 'razorpay'
   status: 'draft' | 'shared' | 'paid'
   createdAt: Date
 }

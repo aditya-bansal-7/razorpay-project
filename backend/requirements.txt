@@ -4,4 +4,5 @@ Flask-Migrate==4.1.0
 Flask-Cors==6.0.5
 psycopg[binary]==3.3.5
 python-dotenv==1.2.3
+razorpay==1.4.2
 pytest==8.3.3 

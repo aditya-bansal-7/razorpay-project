@@ -63,6 +63,15 @@ def create_app(test_config=None):
                 if "due_date" not in ledger_columns:
                     connection.execute(text("ALTER TABLE ledger_entries ADD COLUMN due_date TIMESTAMP"))
 
+        if "payment_links" in tables:
+            payment_link_columns = {column["name"] for column in inspector.get_columns("payment_links")}
+            with db.engine.begin() as connection:
+                if "ledger_entry_id" not in payment_link_columns:
+                    connection.execute(text("ALTER TABLE payment_links ADD COLUMN ledger_entry_id VARCHAR(64)"))
+                if db.engine.dialect.name == "postgresql":
+                    connection.execute(text("ALTER TABLE payment_links DROP CONSTRAINT IF EXISTS payment_link_status_valid"))
+                    connection.execute(text("ALTER TABLE payment_links ADD CONSTRAINT payment_link_status_valid CHECK (status IN ('draft','issued','active','completed','expired','cancelled'))"))
+
         if "merchants" not in tables:
             db.create_all()
 

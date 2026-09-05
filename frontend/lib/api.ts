@@ -60,6 +60,8 @@ export type LedgerApi = {
   amount: number
   currency: string
   description: string
+  transactionDate?: string
+  dueDate?: string
   createdAt: string
   updatedAt: string
 }
@@ -85,6 +87,24 @@ export type DashboardMetricsApi = {
   lastUpdated: string
 }
 
+export type PaymentLinkApi = {
+  id: string
+  merchantId: string
+  customerId: string
+  ledgerEntryId?: string
+  provider: 'razorpay'
+  providerLinkId?: string
+  shortUrl: string
+  amount: number
+  amountPaid: number
+  amountDue: number
+  currency: string
+  status: string
+  expiresAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
 export const api = {
   listCustomers: () => request<CustomerApi[]>('/customers'),
   getCustomer: (customerId: string) => request<CustomerApi>(`/customers/${customerId}`),
@@ -94,11 +114,13 @@ export const api = {
     request<CustomerApi>(`/customers/${customerId}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteCustomer: (customerId: string) => request<{ success: boolean }>(`/customers/${customerId}`, { method: 'DELETE' }),
   listCustomerLedger: (customerId: string) => request<LedgerApi[]>(`/customers/${customerId}/ledger`),
-  createLedgerEntry: (customerId: string, payload: { type: 'credit' | 'payment' | 'adjustment'; amount: number; description?: string; currency?: string }) =>
+  createLedgerEntry: (customerId: string, payload: { type: 'credit' | 'payment' | 'adjustment'; amount: number; description?: string; currency?: string; transactionDate?: string; dueDate?: string }) =>
     request<LedgerApi>(`/customers/${customerId}/ledger`, { method: 'POST', body: JSON.stringify(payload) }),
   getBalance: (customerId: string) => request<BalanceApi>(`/customers/${customerId}/balance`),
   listLedger: () => request<LedgerApi[]>('/ledger'),
   listDashboard: () => request<DashboardMetricsApi>('/dashboard'),
+  createPaymentLink: (payload: { customerId: string; amount: number; ledgerEntryId?: string; acceptPartial?: boolean; firstMinPartialAmount?: number }) =>
+    request<PaymentLinkApi>('/payment-links', { method: 'POST', body: JSON.stringify(payload) }),
 }
 
 export function toCustomerModel(data: CustomerApi) {
@@ -124,6 +146,8 @@ export function toLedgerModel(data: LedgerApi) {
     amount: Number(data.amount),
     currency: data.currency,
     description: data.description,
+    transactionDate: data.transactionDate ? normalizeDate(data.transactionDate) : undefined,
+    dueDate: data.dueDate ? normalizeDate(data.dueDate) : undefined,
     createdAt: normalizeDate(data.createdAt),
     updatedAt: normalizeDate(data.updatedAt),
   }

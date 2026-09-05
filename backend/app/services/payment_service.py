@@ -13,6 +13,19 @@ class ValidationError(ValueError):
 
 class PaymentService:
     @staticmethod
+    def parse_date(value, field_name):
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValidationError(f"{field_name} must be an ISO date/time string", {field_name: "invalid"}) from exc
+        raise ValidationError(f"{field_name} must be a date or ISO string", {field_name: "invalid"})
+
+    @staticmethod
     def validate_payload(payload):
         if not isinstance(payload, dict):
             raise ValidationError("Request body must be a JSON object", {"body": "expected object"})
@@ -39,7 +52,7 @@ class PaymentService:
             "provider_payment_id": payload.get("providerPaymentId") or None,
             "provider_order_id": payload.get("providerOrderId") or None,
             "provider_payment_link_id": payload.get("providerPaymentLinkId") or None,
-            "paid_at": payload.get("paidAt") or None,
+            "paid_at": PaymentService.parse_date(payload.get("paidAt") or payload.get("paid_at"), "paidAt"),
         }
 
     @staticmethod
@@ -64,7 +77,7 @@ class PaymentService:
             amount=data["amount"],
             currency=data["currency"],
             status=data["status"],
-            paid_at=datetime.utcnow() if data["status"] == "completed" else None,
+            paid_at=data["paid_at"] or (datetime.utcnow() if data["status"] == "completed" else None),
         )
         db.session.add(payment)
         db.session.commit()

@@ -5,7 +5,10 @@ import { api, toCustomerModel, toLedgerModel } from './api'
 import type { ActivityRecord, CollectionReminder, Customer, DashboardMetrics, LedgerEntry, PaymentLinkDraft } from './types'
 
 type CustomerInput = Pick<Customer, 'name' | 'phone' | 'email' | 'address'>
-type LedgerInput = Pick<LedgerEntry, 'customerId' | 'type' | 'amount' | 'description'>
+type LedgerInput = Pick<LedgerEntry, 'customerId' | 'type' | 'amount' | 'description'> & {
+  transactionDate?: Date | string
+  dueDate?: Date | string
+}
 
 type State = {
   customers: Customer[]
@@ -22,7 +25,7 @@ type State = {
   refreshDashboard: () => Promise<void>
   addCustomer: (input: CustomerInput) => Promise<Customer | { error: string }>
   addLedgerEntry: (input: LedgerInput) => Promise<{ entry?: LedgerEntry; error?: string }>
-  createPaymentLink: (customerId: string, amount: number) => PaymentLinkDraft | { error: string }
+  createPaymentLink: (customerId: string, amount: number) => Promise<PaymentLinkDraft | { error: string }>
   createReminder: (input: { customerId: string; paymentLinkId: string; message: string }) => CollectionReminder
   balance: (customerId: string) => {
     totalCredit: number
@@ -157,6 +160,8 @@ export const useUdhaarStore = create<State>((set, get) => ({
       type: input.type,
       amount: input.amount,
       description: input.description,
+      ...(input.transactionDate ? { transactionDate: new Date(input.transactionDate).toISOString() } : {}),
+      ...(input.dueDate ? { dueDate: new Date(input.dueDate).toISOString() } : {}),
     })
 
     if (response.error) return { error: response.error }
@@ -175,15 +180,27 @@ export const useUdhaarStore = create<State>((set, get) => ({
     }))
     return { entry }
   },
-  createPaymentLink: (customerId, amount) => {
+  createPaymentLink: async (customerId, amount) => {
     const balance = get().balance(customerId).outstandingBalance
     if (!Number.isFinite(amount) || amount <= 0 || amount > balance) {
       return { error: 'Enter an amount up to the current outstanding balance.' }
     }
 
-    return {
-      error: 'Payment link generation is not enabled yet. Razorpay integration will be added in the next phase.',
-    } as { error: string }
+    const response = await api.createPaymentLink({ customerId, amount, acceptPartial: true, firstMinPartialAmount: 1 })
+    if (response.error || !response.data) return { error: response.error ?? 'Could not create payment link.' }
+    const data = response.data
+    const link: PaymentLinkDraft = {
+      id: data.id,
+      merchantId: data.merchantId,
+      customerId: data.customerId,
+      amount: data.amount,
+      url: data.shortUrl,
+      provider: 'razorpay',
+      status: data.status === 'completed' ? 'paid' : 'shared',
+      createdAt: new Date(data.createdAt),
+    }
+    set((state) => ({ paymentLinks: [link, ...state.paymentLinks] }))
+    return link
   },
   createReminder: (input) => {
     const reminder: CollectionReminder = {

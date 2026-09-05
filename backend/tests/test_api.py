@@ -3,6 +3,7 @@ import pytest
 from app import create_app
 from app.extensions import db
 from app.services.merchant_service import MerchantService
+from app.services.razorpay_service import RazorpayService
 
 
 @pytest.fixture
@@ -106,7 +107,22 @@ def test_overdue_status_and_dashboard_metrics(client):
     assert payload["overdueAmount"] >= 10000
 
 
-def test_payment_and_collection_recording(client):
+def test_payment_and_collection_recording(client, monkeypatch):
+    razorpay_payload = {}
+
+    class FakePaymentLinks:
+        def create(self, payload):
+            razorpay_payload.update(payload)
+            return {"id": "plink_test", "short_url": "https://rzp.io/i/test", "expire_by": None}
+
+    class FakeRazorpayClient:
+        payment_link = FakePaymentLinks()
+
+    monkeypatch.setattr(
+        RazorpayService,
+        "_client",
+        lambda: FakeRazorpayClient(),
+    )
     customer_response = client.post(
         "/api/customers",
         json={"name": "Patel Electricals", "phone": "9988776655"},
@@ -118,17 +134,27 @@ def test_payment_and_collection_recording(client):
         json={"type": "credit", "amount": 10000, "description": "Repair contract", "transactionDate": "2026-09-01", "dueDate": "2026-09-15"},
     )
 
+    ledger_response = client.get(f"/api/customers/{customer_id}/ledger")
+    assert ledger_response.status_code == 200
+    ledger_entry = ledger_response.get_json()["data"][0]
+    assert ledger_entry["transactionDate"] is not None
+    assert ledger_entry["dueDate"] == "2026-09-15T00:00:00"
+
     payment_response = client.post(
         "/api/payments",
-        json={"customerId": customer_id, "amount": 5000, "currency": "INR", "status": "completed", "provider": "internal"},
+        json={"customerId": customer_id, "amount": 5000, "currency": "INR", "status": "completed", "provider": "internal", "paidAt": "2026-09-07T12:30:00"},
     )
     assert payment_response.status_code == 201
+    assert payment_response.get_json()["data"]["paidAt"] == "2026-09-07T12:30:00"
 
     link_response = client.post(
         "/api/payment-links",
         json={"customerId": customer_id, "amount": 2500, "currency": "INR", "provider": "internal", "status": "draft"},
     )
     assert link_response.status_code == 201
+    assert razorpay_payload["amount"] == 250000
+    assert link_response.get_json()["data"]["provider"] == "razorpay"
+    assert link_response.get_json()["data"]["status"] == "issued"
 
     event_response = client.post(
         "/api/collection-events",

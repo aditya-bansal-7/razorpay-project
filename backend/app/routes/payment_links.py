@@ -1,3 +1,8 @@
+import hashlib
+import hmac
+import json
+import os
+
 from flask import Blueprint, request
 
 from app.extensions import db
@@ -52,3 +57,24 @@ def get_payment_link(payment_link_id):
     if not link:
         return failure_response("Payment link not found", {"paymentLinkId": payment_link_id}, 404)
     return success_response(link.to_dict())
+
+
+@payment_links_bp.post("/webhooks/razorpay")
+def razorpay_webhook():
+    signature = request.headers.get("X-Razorpay-Signature", "")
+    secret = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
+    expected = hmac.new(secret.encode(), request.get_data(), hashlib.sha256).hexdigest()
+    if not secret or not hmac.compare_digest(signature, expected):
+        return failure_response("Invalid webhook signature", status_code=400)
+
+    payload = request.get_json(silent=True) or {}
+    if payload.get("event") not in {"payment_link.paid", "payment_link.partially_paid"}:
+        return success_response({"processed": False})
+    try:
+        link = PaymentLinkService.apply_provider_payment(payload)
+    except LookupError as exc:
+        return failure_response(str(exc), status_code=404)
+    except Exception as exc:
+        db.session.rollback()
+        return failure_response("Failed to process Razorpay webhook", {"message": str(exc)}, 500)
+    return success_response({"processed": True, "paymentLink": link.to_dict()})

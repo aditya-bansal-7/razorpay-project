@@ -11,6 +11,7 @@ class PaymentLink(db.Model):
     id = db.Column(db.String(64), primary_key=True, default=lambda: f"payment-link-{uuid4().hex[:8]}")
     merchant_id = db.Column(db.String(64), db.ForeignKey("merchants.id", ondelete="CASCADE"), nullable=False)
     customer_id = db.Column(db.String(64), db.ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    ledger_entry_id = db.Column(db.String(64), db.ForeignKey("ledger_entries.id", ondelete="SET NULL"), nullable=True)
     amount = db.Column(db.Numeric(precision=12, scale=2), nullable=False)
     amount_paid = db.Column(db.Numeric(precision=12, scale=2), nullable=False, default=Decimal("0"))
     amount_due = db.Column(db.Numeric(precision=12, scale=2), nullable=False, default=Decimal("0"))
@@ -25,13 +26,14 @@ class PaymentLink(db.Model):
 
     merchant = db.relationship("Merchant", back_populates="payment_links")
     customer = db.relationship("Customer", back_populates="payment_links")
+    ledger_entry = db.relationship("LedgerEntry", back_populates="payment_links")
     payments = db.relationship("Payment", back_populates="payment_link", cascade="all, delete-orphan")
     collection_events = db.relationship("CollectionEvent", back_populates="payment_link", cascade="all, delete-orphan")
 
     __table_args__ = (
         db.CheckConstraint("provider IN ('internal','razorpay')", name="payment_link_provider_valid"),
         db.CheckConstraint("amount > 0", name="payment_link_amount_positive"),
-        db.CheckConstraint("status IN ('draft','active','completed','expired','cancelled')", name="payment_link_status_valid"),
+        db.CheckConstraint("status IN ('draft','issued','active','completed','expired','cancelled')", name="payment_link_status_valid"),
     )
 
     def to_dict(self):
@@ -39,6 +41,7 @@ class PaymentLink(db.Model):
             "id": self.id,
             "merchantId": self.merchant_id,
             "customerId": self.customer_id,
+            "ledgerEntryId": self.ledger_entry_id,
             "amount": float(self.amount),
             "amountPaid": float(self.amount_paid),
             "amountDue": float(self.amount_due),
