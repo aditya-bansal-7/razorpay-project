@@ -106,5 +106,6 @@ def collection_strategy():
             "expectedRecovery": decision["expectedRecovery"],
             "alternativeAction": decision["alternativeAction"],
         },
-        "validation": decision["validation"]
+        "validation": decision["validation"],
+        "promptVersion": decision.get("promptVersion", "unknown"),
     })
