@@ -42,6 +42,7 @@ def create_app(test_config=None):
     from .routes.collection_events import collection_events_bp
     from .routes.collections import collections_bp
     from .routes.simulation import simulation_bp
+    from .routes.ai import ai_bp
     from .services.merchant_service import MerchantService
 
     app.register_blueprint(merchant_bp)
@@ -53,6 +54,7 @@ def create_app(test_config=None):
     app.register_blueprint(collection_events_bp)
     app.register_blueprint(collections_bp)
     app.register_blueprint(simulation_bp)
+    app.register_blueprint(ai_bp)
 
     with app.app_context():
         db.create_all()

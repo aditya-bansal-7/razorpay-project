@@ -383,3 +383,21 @@ def test_collection_action_selection_maximizes_expected_recovery_with_cooldown()
 
     features["daysSinceLastCollectionAction"] = 2
     assert CollectionTaskService.evaluate_actions(features)["selected"]["action"] == "WAIT"
+
+
+def test_multi_seed_simulation_evaluation_is_reproducible(client):
+    payload = {"startSeed": 10, "seedCount": 20, "customerCount": 500}
+    first = client.post("/api/simulation/evaluate", json=payload)
+    assert first.status_code == 200
+    result = first.get_json()["data"]
+    assert result["seedCount"] == 20
+    assert result["customerCount"] == 500
+    for strategy in ("baseline", "collectionRules"):
+        for metric in ("amountRecovered", "recoveryRate", "recoveryPerAction", "customersTargeted"):
+            assert set(result["strategies"][strategy][metric]) == {"mean", "median", "min", "max", "standardDeviation"}
+    assert set(result["uplift"]) == {"amount", "rate", "recoveryRateDelta"}
+    assert len(result["perSeed"]) == 20
+
+    second = client.post("/api/simulation/evaluate", json=payload)
+    assert second.status_code == 200
+    assert second.get_json()["data"] == result

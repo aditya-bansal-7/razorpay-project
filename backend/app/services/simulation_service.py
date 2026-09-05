@@ -1,6 +1,8 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+import copy
 import random
+import statistics
 
 from app.extensions import db
 from app.models.simulation_run import SimulationRun
@@ -16,6 +18,16 @@ class SimulationService:
     MAX_COUNT = 5000
     DEFAULT_AS_OF = date(2026, 9, 5)
     PROFILES = ("reliable", "late_payer", "partial_payer", "responsive", "resistant")
+    STRESS_SCENARIOS = (
+        {"name": "high_resistant", "seedStart": 101, "seedCount": 5, "resistantShare": 0.80},
+        {"name": "low_payment_probability", "seedStart": 201, "seedCount": 5, "resistantShare": 1.0, "responseDraw": 0.99},
+        {"name": "weak_reminders", "seedStart": 301, "seedCount": 5, "reminderSuccessRate": 0.05},
+        {"name": "high_partial_payment", "seedStart": 401, "seedCount": 5, "partialShare": 0.80, "partialPaymentRate": 0.90},
+        {"name": "very_old_overdue", "seedStart": 501, "seedCount": 5, "daysOverdue": 90},
+        {"name": "mostly_small_balances", "seedStart": 601, "seedCount": 5, "balanceMultiplier": 0.15},
+        {"name": "mostly_large_balances", "seedStart": 701, "seedCount": 5, "balanceMultiplier": 3.0},
+        {"name": "mixed_behavior", "seedStart": 801, "seedCount": 5},
+    )
 
     @staticmethod
     def _money(value):
@@ -207,6 +219,135 @@ class SimulationService:
             "recoveryPerAction": SimulationService._money(amount_recovered / targeted if targeted else 0),
             "actionCounts": action_counts,
             "customerResults": customer_results,
+        }
+
+    @staticmethod
+    def _apply_stress_scenario(dataset, config):
+        stressed = copy.deepcopy(dataset)
+        customers = stressed["customers"]
+        resistant_share = config.get("resistantShare")
+        partial_share = config.get("partialShare")
+        response_draw = config.get("responseDraw")
+        for index, customer in enumerate(customers):
+            if resistant_share is not None and index < round(len(customers) * resistant_share):
+                customer["profile"] = "resistant"
+                customer["behaviorProfile"] = "resistant"
+            if partial_share is not None and index < round(len(customers) * partial_share):
+                customer["profile"] = "partial_payer"
+                customer["behaviorProfile"] = "partial_payer"
+                customer["partialPaymentRate"] = config.get("partialPaymentRate", 0.90)
+                customer["paymentCount"] = max(customer["paymentCount"], 3)
+            if config.get("reminderSuccessRate") is not None:
+                customer["reminderSuccessRate"] = config["reminderSuccessRate"]
+                for event in customer["collectionEvents"]:
+                    event["outcome"] = "paid" if config["reminderSuccessRate"] >= 0.5 else "ignored"
+            if response_draw is not None:
+                customer["responseDraw"] = response_draw
+            if config.get("daysOverdue") is not None and customer["outstandingAmount"] > 0:
+                customer["daysOverdue"] = config["daysOverdue"]
+                customer["daysSinceLastCollectionAction"] = 10
+            if config.get("balanceMultiplier") is not None:
+                customer["outstandingAmount"] = SimulationService._money(Decimal(str(customer["outstandingAmount"])) * Decimal(str(config["balanceMultiplier"])))
+        stressed["stressScenario"] = config["name"]
+        return stressed
+
+    @staticmethod
+    def evaluate_stress_scenarios(customer_count=DEFAULT_COUNT, as_of=None, scenarios=None, materially_worse_threshold=0.10):
+        as_of = as_of or SimulationService.DEFAULT_AS_OF
+        scenarios = scenarios or SimulationService.STRESS_SCENARIOS
+        results = []
+        for config in scenarios:
+            seeds = list(range(config["seedStart"], config["seedStart"] + config["seedCount"]))
+            stressed_results = []
+            for seed in seeds:
+                dataset = SimulationService._apply_stress_scenario(SimulationService.generate_dataset(seed, customer_count, as_of), config)
+                baseline = SimulationService._evaluate_strategy(dataset, "baseline")
+                rules = SimulationService._evaluate_strategy(dataset, "collection_rules")
+                baseline_amount = baseline["amountRecovered"]
+                rules_amount = rules["amountRecovered"]
+                uplift_amount = SimulationService._money(Decimal(str(rules_amount)) - Decimal(str(baseline_amount)))
+                stressed_results.append({
+                    "seed": seed,
+                    "baseline": {key: baseline[key] for key in ("customersTargeted", "collectionActions", "amountRecovered", "recoveryRate", "recoveryPerAction", "expectedRecovery")},
+                    "collectionRules": {key: rules[key] for key in ("customersTargeted", "collectionActions", "amountRecovered", "recoveryRate", "recoveryPerAction", "expectedRecovery")},
+                    "uplift": {
+                        "amount": uplift_amount,
+                        "percentage": SimulationService._money(uplift_amount / baseline_amount if baseline_amount else 0),
+                    },
+                })
+            metrics = ("amountRecovered", "recoveryRate", "recoveryPerAction", "customersTargeted", "expectedRecovery")
+            summary = {strategy: {metric: SimulationService._summary([item[strategy][metric] for item in stressed_results]) for metric in metrics} for strategy in ("baseline", "collectionRules")}
+            uplift = {metric: SimulationService._summary([item["uplift"][metric] for item in stressed_results]) for metric in ("amount", "percentage")}
+            worse = [item["seed"] for item in stressed_results if item["baseline"]["amountRecovered"] > 0 and item["collectionRules"]["amountRecovered"] < item["baseline"]["amountRecovered"] * (1 - materially_worse_threshold)]
+            results.append({"name": config["name"], "config": config, "seedCount": len(seeds), "summary": summary, "uplift": uplift, "materiallyWorseSeeds": worse, "perSeed": stressed_results})
+        return {
+            "customerCount": customer_count,
+            "asOfDate": as_of.isoformat(),
+            "materiallyWorseThreshold": materially_worse_threshold,
+            "scenarios": results,
+            "scenarioCount": len(results),
+            "worstCaseUplift": min((scenario["uplift"]["amount"]["min"] for scenario in results), default=0),
+            "bestCaseUplift": max((scenario["uplift"]["amount"]["max"] for scenario in results), default=0),
+            "scenariosWhereRulesLose": sum(bool(scenario["materiallyWorseSeeds"]) for scenario in results),
+        }
+
+    @staticmethod
+    def _summary(values):
+        if not values:
+            return {"mean": 0, "median": 0, "min": 0, "max": 0, "standardDeviation": 0}
+        return {
+            "mean": SimulationService._money(statistics.mean(values)),
+            "median": SimulationService._money(statistics.median(values)),
+            "min": SimulationService._money(min(values)),
+            "max": SimulationService._money(max(values)),
+            "standardDeviation": SimulationService._money(statistics.pstdev(values)),
+        }
+
+    @staticmethod
+    def evaluate_seeds(seeds, customer_count=DEFAULT_COUNT, as_of=None, materially_worse_threshold=0.10):
+        if not seeds:
+            raise SimulationValidationError("At least one seed is required")
+        if customer_count < 1 or customer_count > SimulationService.MAX_COUNT:
+            raise SimulationValidationError(f"customerCount must be between 1 and {SimulationService.MAX_COUNT}")
+        if materially_worse_threshold < 0 or materially_worse_threshold > 1:
+            raise SimulationValidationError("materiallyWorseThreshold must be between 0 and 1")
+        as_of = as_of or SimulationService.DEFAULT_AS_OF
+        per_seed = []
+        for seed in seeds:
+            dataset = SimulationService.generate_dataset(int(seed), customer_count, as_of)
+            baseline = SimulationService._evaluate_strategy(dataset, "baseline")
+            rules = SimulationService._evaluate_strategy(dataset, "collection_rules")
+            baseline_amount = baseline["amountRecovered"]
+            rules_amount = rules["amountRecovered"]
+            uplift_amount = SimulationService._money(Decimal(str(rules_amount)) - Decimal(str(baseline_amount)))
+            uplift_rate = SimulationService._money(uplift_amount / baseline_amount if baseline_amount else 0)
+            per_seed.append({
+                "seed": int(seed),
+                "customerCount": customer_count,
+                "baseline": {key: baseline[key] for key in ("customersTargeted", "collectionActions", "amountTargeted", "amountRecovered", "expectedRecovery", "recoveryRate", "recoveryPerAction", "actionCounts")},
+                "collectionRules": {key: rules[key] for key in ("customersTargeted", "collectionActions", "amountTargeted", "amountRecovered", "recoveryRate", "recoveryPerAction", "actionCounts", "expectedRecovery")},
+                "uplift": {"amount": uplift_amount, "rate": uplift_rate, "recoveryRateDelta": SimulationService._money(Decimal(str(rules["recoveryRate"])) - Decimal(str(baseline["recoveryRate"])))},
+            })
+        metric_names = ("amountRecovered", "recoveryRate", "recoveryPerAction", "customersTargeted", "expectedRecovery")
+        strategy_stats = {}
+        for strategy in ("baseline", "collectionRules"):
+            strategy_stats[strategy] = {metric: SimulationService._summary([result[strategy][metric] for result in per_seed]) for metric in metric_names}
+        uplift_stats = {metric: SimulationService._summary([result["uplift"][metric] for result in per_seed]) for metric in ("amount", "rate", "recoveryRateDelta")}
+        materially_worse = [
+            result["seed"] for result in per_seed
+            if result["baseline"]["amountRecovered"] > 0
+            and result["collectionRules"]["amountRecovered"] < result["baseline"]["amountRecovered"] * (1 - materially_worse_threshold)
+        ]
+        return {
+            "seedCount": len(per_seed),
+            "seeds": [result["seed"] for result in per_seed],
+            "customerCount": customer_count,
+            "asOfDate": as_of.isoformat(),
+            "materiallyWorseThreshold": materially_worse_threshold,
+            "strategies": strategy_stats,
+            "uplift": uplift_stats,
+            "materiallyWorseSeeds": materially_worse,
+            "perSeed": per_seed,
         }
 
     @staticmethod
