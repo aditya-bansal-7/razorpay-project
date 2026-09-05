@@ -24,6 +24,7 @@ class LedgerEntry(db.Model):
     payments = db.relationship("Payment", back_populates="ledger_entry", cascade="all, delete-orphan")
     payment_links = db.relationship("PaymentLink", back_populates="ledger_entry")
     collection_events = db.relationship("CollectionEvent", back_populates="ledger_entry", cascade="all, delete-orphan")
+    collection_tasks = db.relationship("CollectionTask", back_populates="ledger_entry")
 
     __table_args__ = (
         db.CheckConstraint("type IN ('credit', 'payment', 'adjustment')", name="ledger_type_valid"),

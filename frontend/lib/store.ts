@@ -1,8 +1,8 @@
 ﻿'use client'
 
 import { create } from 'zustand'
-import { api, toCustomerModel, toLedgerModel } from './api'
-import type { ActivityRecord, CollectionReminder, Customer, DashboardMetrics, LedgerEntry, PaymentLinkDraft } from './types'
+import { api, toCollectionTaskModel, toCustomerModel, toLedgerModel } from './api'
+import type { ActivityRecord, CollectionReminder, CollectionTask, Customer, DashboardMetrics, LedgerEntry, PaymentLinkDraft } from './types'
 
 type CustomerInput = Pick<Customer, 'name' | 'phone' | 'email' | 'address'>
 type LedgerInput = Pick<LedgerEntry, 'customerId' | 'type' | 'amount' | 'description'> & {
@@ -16,6 +16,7 @@ type State = {
   activity: ActivityRecord[]
   paymentLinks: PaymentLinkDraft[]
   reminders: CollectionReminder[]
+  collectionTasks: CollectionTask[]
   dashboardMetrics: DashboardMetrics | null
   loading: boolean
   error: string | null
@@ -23,6 +24,9 @@ type State = {
   refreshCustomers: () => Promise<void>
   refreshLedger: () => Promise<void>
   refreshDashboard: () => Promise<void>
+  refreshCollectionQueue: () => Promise<void>
+  approveCollectionTask: (taskId: string) => Promise<string | null>
+  rejectCollectionTask: (taskId: string) => Promise<string | null>
   addCustomer: (input: CustomerInput) => Promise<Customer | { error: string }>
   addLedgerEntry: (input: LedgerInput) => Promise<{ entry?: LedgerEntry; error?: string }>
   createPaymentLink: (customerId: string, amount: number) => Promise<PaymentLinkDraft | { error: string }>
@@ -42,6 +46,7 @@ export const useUdhaarStore = create<State>((set, get) => ({
   activity: [],
   paymentLinks: [],
   reminders: [],
+  collectionTasks: [],
   dashboardMetrics: null,
   loading: false,
   error: null,
@@ -131,6 +136,26 @@ export const useUdhaarStore = create<State>((set, get) => ({
         lastUpdated: new Date(response.data.lastUpdated),
       },
     })
+  },
+  refreshCollectionQueue: async () => {
+    const response = await api.listCollectionQueue()
+    if (response.error) {
+      set({ error: response.error })
+      return
+    }
+    set({ collectionTasks: (response.data ?? []).map(toCollectionTaskModel) })
+  },
+  approveCollectionTask: async (taskId) => {
+    const response = await api.approveCollectionTask(taskId)
+    if (response.error) return response.error
+    set((state) => ({ collectionTasks: state.collectionTasks.filter((task) => task.id !== taskId) }))
+    return null
+  },
+  rejectCollectionTask: async (taskId) => {
+    const response = await api.rejectCollectionTask(taskId)
+    if (response.error) return response.error
+    set((state) => ({ collectionTasks: state.collectionTasks.filter((task) => task.id !== taskId) }))
+    return null
   },
   addCustomer: async (input) => {
     const response = await api.createCustomer(input)

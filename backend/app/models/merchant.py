@@ -18,6 +18,7 @@ class Merchant(db.Model):
     payments = db.relationship("Payment", back_populates="merchant", cascade="all, delete-orphan")
     payment_links = db.relationship("PaymentLink", back_populates="merchant", cascade="all, delete-orphan")
     collection_events = db.relationship("CollectionEvent", back_populates="merchant", cascade="all, delete-orphan")
+    collection_tasks = db.relationship("CollectionTask", back_populates="merchant", cascade="all, delete-orphan")
 
     def to_dict(self):
         return {

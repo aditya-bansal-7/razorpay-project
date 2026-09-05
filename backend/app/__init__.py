@@ -32,7 +32,7 @@ def create_app(test_config=None):
         supports_credentials=False,
     )
 
-    from .models import Customer, LedgerEntry, Merchant, Payment, PaymentLink, CollectionEvent  # noqa: F401
+    from .models import Customer, LedgerEntry, Merchant, Payment, PaymentLink, CollectionEvent, CollectionTask  # noqa: F401
     from .routes.customers import customers_bp
     from .routes.ledger import ledger_bp
     from .routes.merchant import merchant_bp
@@ -40,6 +40,7 @@ def create_app(test_config=None):
     from .routes.payments import payments_bp
     from .routes.payment_links import payment_links_bp
     from .routes.collection_events import collection_events_bp
+    from .routes.collections import collections_bp
     from .services.merchant_service import MerchantService
 
     app.register_blueprint(merchant_bp)
@@ -49,6 +50,7 @@ def create_app(test_config=None):
     app.register_blueprint(payments_bp)
     app.register_blueprint(payment_links_bp)
     app.register_blueprint(collection_events_bp)
+    app.register_blueprint(collections_bp)
 
     with app.app_context():
         db.create_all()

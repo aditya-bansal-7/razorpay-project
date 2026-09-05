@@ -81,6 +81,32 @@ export interface CollectionReminder {
   createdAt: Date
 }
 
+export interface CollectionTask {
+  id: string
+  merchantId: string
+  customerId: string
+  customerName: string
+  ledgerEntryId?: string
+  action: 'SEND_REMINDER' | 'OFFER_PARTIAL' | 'ESCALATE' | 'WAIT'
+  priority: 'low' | 'medium' | 'high' | 'critical'
+  status: 'pending' | 'approved' | 'rejected' | 'completed'
+  reason: string
+  confidence: number
+  recommendedAmount: number
+  channel: string
+  priorityScore: number
+  metrics: {
+    outstandingAmount: number
+    daysOverdue: number
+    averagePaymentDelay: number
+    reminderSuccessRate: number
+    partialPaymentRate: number
+    daysSinceLastCollectionAction: number | null
+  }
+  createdAt: Date
+  updatedAt: Date
+}
+
 /**
  * Derived balance calculation from ledger entries:
  * Outstanding Balance = SUM(CREDIT) - SUM(PAYMENT) + SUM(ADJUSTMENT)

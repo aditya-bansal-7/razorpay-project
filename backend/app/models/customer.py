@@ -22,6 +22,7 @@ class Customer(db.Model):
     payments = db.relationship("Payment", back_populates="customer", cascade="all, delete-orphan")
     payment_links = db.relationship("PaymentLink", back_populates="customer", cascade="all, delete-orphan")
     collection_events = db.relationship("CollectionEvent", back_populates="customer", cascade="all, delete-orphan")
+    collection_tasks = db.relationship("CollectionTask", back_populates="customer", cascade="all, delete-orphan")
 
     __table_args__ = (
         db.UniqueConstraint("merchant_id", "phone", name="uq_customer_merchant_phone"),

@@ -165,3 +165,43 @@ def test_payment_and_collection_recording(client, monkeypatch):
     assert client.get("/api/payments").status_code == 200
     assert client.get("/api/payment-links").status_code == 200
     assert client.get("/api/collection-events").status_code == 200
+
+
+def test_collection_queue_rules_and_task_lifecycle(client):
+    customer_response = client.post(
+        "/api/customers",
+        json={"name": "Overdue Wholesale", "phone": "9000012345"},
+    )
+    customer_id = customer_response.get_json()["data"]["id"]
+    credit_response = client.post(
+        f"/api/customers/{customer_id}/ledger",
+        json={
+            "type": "credit",
+            "amount": 12000,
+            "description": "Overdue stock order",
+            "dueDate": "2024-01-01",
+        },
+    )
+    assert credit_response.status_code == 201
+
+    queue_response = client.get("/api/collections/queue")
+    assert queue_response.status_code == 200
+    tasks = queue_response.get_json()["data"]
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task["customerId"] == customer_id
+    assert task["action"] == "ESCALATE"
+    assert task["priority"] in {"high", "critical"}
+    assert task["metrics"]["outstandingAmount"] == 12000
+
+    duplicate_response = client.post(f"/api/collections/evaluate/{customer_id}")
+    assert duplicate_response.status_code == 200
+    assert duplicate_response.get_json()["data"]["id"] == task["id"]
+
+    approve_response = client.post(f"/api/collections/{task['id']}/approve")
+    assert approve_response.status_code == 200
+    assert approve_response.get_json()["data"]["status"] == "approved"
+
+    reject_response = client.post(f"/api/collections/{task['id']}/reject")
+    assert reject_response.status_code == 200
+    assert reject_response.get_json()["data"]["status"] == "rejected"

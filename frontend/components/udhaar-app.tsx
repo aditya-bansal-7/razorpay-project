@@ -10,6 +10,7 @@ import {
   Bell,
   ChevronRight,
   CircleDollarSign,
+  ClipboardList,
   LayoutDashboard,
   Menu,
   Plus,
@@ -33,6 +34,7 @@ const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/ledger", label: "Ledger", icon: CircleDollarSign },
+  { href: "/collections", label: "Collection Queue", icon: ClipboardList },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 function money(n: number) {
@@ -121,6 +123,8 @@ function Layout({ children }: { children: React.ReactNode }) {
                   ? "Customers"
                   : pathname === "/ledger"
                     ? "Ledger"
+                      : pathname === "/collections"
+                        ? "Collection Queue"
                     : pathname === "/settings"
                       ? "Settings"
                       : "Good morning, KiranaKart"}
@@ -656,6 +660,94 @@ function LedgerPage() {
     </>
   );
 }
+function CollectionQueuePage() {
+    const tasks = useUdhaarStore((s) => s.collectionTasks);
+    const refresh = useUdhaarStore((s) => s.refreshCollectionQueue);
+    const approve = useUdhaarStore((s) => s.approveCollectionTask);
+    const reject = useUdhaarStore((s) => s.rejectCollectionTask);
+    const [selected, setSelected] = useState<(typeof tasks)[number] | null>(null);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+      void refresh();
+    }, [refresh]);
+
+    const updateTask = async (action: "approve" | "reject", taskId: string) => {
+      const result = await (action === "approve" ? approve(taskId) : reject(taskId));
+      if (result) setError(result);
+      else setSelected(null);
+    };
+
+    return (
+      <>
+        <section className="page-intro">
+          <div>
+            <span className="eyebrow">Deterministic rules</span>
+            <h2>Collection Queue</h2>
+            <p>Review the next best collection action for each outstanding customer.</p>
+          </div>
+          <button className="secondary-btn" onClick={() => void refresh()}>
+            Refresh queue
+          </button>
+        </section>
+        {error && <p className="form-error">{error}</p>}
+        <div className="table-panel">
+          <table>
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th>Outstanding</th>
+                <th>Overdue</th>
+                <th>Recommendation</th>
+                <th>Priority</th>
+                <th>Recommended amount</th>
+                <th>Confidence</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((task) => (
+                <tr key={task.id}>
+                  <td><strong>{task.customerName}</strong></td>
+                  <td className="amount-cell">{money(task.metrics.outstandingAmount)}</td>
+                  <td className="muted">{task.metrics.daysOverdue} days</td>
+                  <td><span className={`type type-${task.action.toLowerCase()}`}>{task.action.replaceAll("_", " ")}</span></td>
+                  <td><span className={`status status-${task.priority}`}>{task.priority}</span></td>
+                  <td>{money(task.recommendedAmount)}</td>
+                  <td>{Math.round(task.confidence * 100)}%</td>
+                  <td><button className="row-link" onClick={() => setSelected(task)}>Review</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!tasks.length && <div className="empty"><h3>No collection actions right now</h3><p>Customers with outstanding balances will appear here after evaluation.</p></div>}
+        </div>
+        {selected && (
+          <div className="modal-backdrop" onClick={() => setSelected(null)}>
+            <div className="modal" onClick={(event) => event.stopPropagation()}>
+              <div className="modal-head">
+                <div><span className="eyebrow">Rule reasoning</span><h2>{selected.customerName}</h2></div>
+                <button className="icon-btn" onClick={() => setSelected(null)} aria-label="Close"><X size={18} /></button>
+              </div>
+              <div className="detail-balance"><span>Recommended action</span><strong>{selected.action.replaceAll("_", " ")}</strong><p>{selected.reason}</p></div>
+              <div className="balance-breakdown">
+                <div><span>Outstanding</span><strong>{money(selected.metrics.outstandingAmount)}</strong></div>
+                <div><span>Days overdue</span><strong>{selected.metrics.daysOverdue}</strong></div>
+                <div><span>Payment delay</span><strong>{selected.metrics.averagePaymentDelay} days</strong></div>
+                <div><span>Reminder success</span><strong>{Math.round(selected.metrics.reminderSuccessRate * 100)}%</strong></div>
+                <div><span>Partial payment rate</span><strong>{Math.round(selected.metrics.partialPaymentRate * 100)}%</strong></div>
+                <div><span>Last action</span><strong>{selected.metrics.daysSinceLastCollectionAction == null ? "Never" : `${selected.metrics.daysSinceLastCollectionAction} days ago`}</strong></div>
+              </div>
+              <div className="modal-actions">
+                <button className="secondary-btn" onClick={() => void updateTask("reject", selected.id)}>Reject</button>
+                <button className="primary-btn" onClick={() => void updateTask("approve", selected.id)}>Approve</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
 function PaymentReminder({
   customer,
   onClose,
@@ -941,7 +1033,7 @@ export default function UdhaarApp({
   route,
   id,
 }: {
-  route: "dashboard" | "customers" | "ledger" | "settings" | "detail";
+  route: "dashboard" | "customers" | "ledger" | "collections" | "settings" | "detail";
   id?: string;
 }) {
   const { hydrate, loading, error } = useUdhaarStore();
@@ -970,6 +1062,7 @@ export default function UdhaarApp({
       {route === "dashboard" && <Overview />}
       {route === "customers" && <CustomersPage />}
       {route === "ledger" && <LedgerPage />}
+      {route === "collections" && <CollectionQueuePage />}
       {route === "settings" && <SettingsPage />}
       {route === "detail" && id && <CustomerDetail id={id} />}
     </Layout>

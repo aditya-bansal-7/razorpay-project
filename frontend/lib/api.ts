@@ -105,6 +105,32 @@ export type PaymentLinkApi = {
   updatedAt: string
 }
 
+export type CollectionTaskApi = {
+  id: string
+  merchantId: string
+  customerId: string
+  customerName: string
+  ledgerEntryId?: string
+  action: 'SEND_REMINDER' | 'OFFER_PARTIAL' | 'ESCALATE' | 'WAIT'
+  priority: 'low' | 'medium' | 'high' | 'critical'
+  status: 'pending' | 'approved' | 'rejected' | 'completed'
+  reason: string
+  confidence: number
+  recommendedAmount: number
+  channel: string
+  priorityScore: number
+  metrics: {
+    outstandingAmount: number
+    daysOverdue: number
+    averagePaymentDelay: number
+    reminderSuccessRate: number
+    partialPaymentRate: number
+    daysSinceLastCollectionAction: number | null
+  }
+  createdAt: string
+  updatedAt: string
+}
+
 export const api = {
   listCustomers: () => request<CustomerApi[]>('/customers'),
   getCustomer: (customerId: string) => request<CustomerApi>(`/customers/${customerId}`),
@@ -121,6 +147,10 @@ export const api = {
   listDashboard: () => request<DashboardMetricsApi>('/dashboard'),
   createPaymentLink: (payload: { customerId: string; amount: number; ledgerEntryId?: string; acceptPartial?: boolean; firstMinPartialAmount?: number }) =>
     request<PaymentLinkApi>('/payment-links', { method: 'POST', body: JSON.stringify(payload) }),
+  listCollectionQueue: () => request<CollectionTaskApi[]>('/collections/queue'),
+  evaluateCollection: (customerId: string) => request<CollectionTaskApi | null>(`/collections/evaluate/${customerId}`, { method: 'POST' }),
+  approveCollectionTask: (taskId: string) => request<CollectionTaskApi>(`/collections/${taskId}/approve`, { method: 'POST' }),
+  rejectCollectionTask: (taskId: string) => request<CollectionTaskApi>(`/collections/${taskId}/reject`, { method: 'POST' }),
 }
 
 export function toCustomerModel(data: CustomerApi) {
@@ -148,6 +178,27 @@ export function toLedgerModel(data: LedgerApi) {
     description: data.description,
     transactionDate: data.transactionDate ? normalizeDate(data.transactionDate) : undefined,
     dueDate: data.dueDate ? normalizeDate(data.dueDate) : undefined,
+    createdAt: normalizeDate(data.createdAt),
+    updatedAt: normalizeDate(data.updatedAt),
+  }
+}
+
+export function toCollectionTaskModel(data: CollectionTaskApi) {
+  return {
+    id: data.id,
+    merchantId: data.merchantId,
+    customerId: data.customerId,
+    customerName: data.customerName,
+    ledgerEntryId: data.ledgerEntryId,
+    action: data.action,
+    priority: data.priority,
+    status: data.status,
+    reason: data.reason,
+    confidence: Number(data.confidence),
+    recommendedAmount: Number(data.recommendedAmount),
+    channel: data.channel,
+    priorityScore: Number(data.priorityScore),
+    metrics: data.metrics,
     createdAt: normalizeDate(data.createdAt),
     updatedAt: normalizeDate(data.updatedAt),
   }
