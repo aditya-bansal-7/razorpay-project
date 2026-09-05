@@ -55,18 +55,55 @@ class CollectionTaskService:
 
     @staticmethod
     def _recommendation(metrics):
-        days = metrics["daysOverdue"]
-        if metrics["daysSinceLastCollectionAction"] is not None and metrics["daysSinceLastCollectionAction"] <= 3:
-            return "WAIT", 0.95, "A collection action happened within the last 3 days; wait for the cooldown period.", 15
-        if days >= 30:
-            return "ESCALATE", 0.94, "The balance has been overdue for 30 days or more.", 90 + min(days, 30)
-        if metrics["partialPaymentRate"] >= 0.5 and metrics["paymentCount"] >= 2:
-            return "OFFER_PARTIAL", 0.88, "This customer frequently makes partial payments; offer a smaller payment amount.", 70 + min(days, 20)
-        if metrics["reminderSuccessRate"] >= 0.5 and metrics["reminderCount"] > 0:
-            return "SEND_REMINDER", 0.86, "Previous reminders have resulted in payments.", 55 + min(days, 20)
-        if 0 < days <= 14:
-            return "SEND_REMINDER", 0.82, "The balance is recently overdue and should receive a timely reminder.", 50 + days
-        return "SEND_REMINDER", 0.65, "The customer has an outstanding balance and no recent collection outcome.", 30 + min(days, 20)
+        selected = CollectionTaskService.evaluate_actions(metrics)["selected"]
+        return selected["action"], selected["confidence"], selected["reason"], selected["priorityScore"]
+
+    @staticmethod
+    def _clamp(value):
+        return max(0.02, min(0.98, value))
+
+    @staticmethod
+    def evaluate_actions(metrics):
+        outstanding = Decimal(str(metrics.get("outstandingAmount", 0)))
+        days = metrics.get("daysOverdue", 0)
+        partial_rate = metrics.get("partialPaymentRate", 0)
+        history = max(0, min(1, 1 - metrics.get("averagePaymentDelay", 0) / 90)) if metrics.get("paymentCount", 0) else 0.25
+        behavior = metrics.get("behaviorProfile")
+        behavior_bias = {"reliable": 0.18, "responsive": 0.25, "partial_payer": 0.08, "late_payer": -0.04, "resistant": -0.18}.get(behavior, 0)
+        probabilities = {
+            "SEND_REMINDER": CollectionTaskService._clamp(0.18 + 0.55 * metrics.get("reminderSuccessRate", 0) + 0.18 * history - 0.50 * partial_rate + behavior_bias),
+            "OFFER_PARTIAL": CollectionTaskService._clamp(0.16 + 0.62 * metrics.get("partialPaymentRate", 0) + 0.18 * history + (0.12 if behavior == "partial_payer" else 0)),
+            "ESCALATE": CollectionTaskService._clamp(0.10 + min(days, 60) / 150 + 0.10 * history + behavior_bias / 2),
+            "WAIT": 0.05,
+        }
+        amounts = {
+            "SEND_REMINDER": outstanding,
+            "OFFER_PARTIAL": max(Decimal("1"), (outstanding * Decimal("0.25")).quantize(Decimal("0.01"))),
+            "ESCALATE": outstanding,
+            "WAIT": Decimal("0"),
+        }
+        reasons = {
+            "SEND_REMINDER": "Reminder recovery is strongest for this customer's response history.",
+            "OFFER_PARTIAL": "Partial payment history makes a smaller offer the highest-value action.",
+            "ESCALATE": "Overdue severity justifies escalation despite lower immediate response probability.",
+            "WAIT": "A recent collection action requires a cooldown before contacting the customer again.",
+        }
+        actions = []
+        for action, probability in probabilities.items():
+            expected_recovery = probability * float(amounts[action])
+            actions.append({
+                "action": action,
+                "probability": round(probability, 4),
+                "expectedAmount": round(float(amounts[action]), 2),
+                "expectedRecovery": round(expected_recovery, 2),
+                "priorityScore": round(((expected_recovery / float(outstanding) * 100) if outstanding else 0) + min(days, 30), 2),
+                "confidence": round(probability, 2),
+                "reason": reasons[action],
+            })
+        cooldown = metrics.get("daysSinceLastCollectionAction") is not None and metrics["daysSinceLastCollectionAction"] <= 3
+        eligible = [action for action in actions if action["action"] != "WAIT" and (action["action"] != "ESCALATE" or days >= 30)]
+        selected = next(action for action in actions if action["action"] == "WAIT") if cooldown else max(eligible, key=lambda action: action["expectedRecovery"])
+        return {"selected": selected, "actions": actions}
 
     @staticmethod
     def _priority(score):
@@ -92,7 +129,10 @@ class CollectionTaskService:
         metrics = CollectionTaskService._metrics(customer)
         if metrics["outstandingAmount"] <= 0:
             return None
+        evaluation = CollectionTaskService.evaluate_actions(metrics)
         action, confidence, reason, score = CollectionTaskService._recommendation(metrics)
+        metrics["expectedRecovery"] = evaluation["selected"]["expectedRecovery"]
+        metrics["actionEvaluations"] = evaluation["actions"]
         amount = metrics["outstandingAmount"]
         if action == "OFFER_PARTIAL":
             amount = max(1, round(amount * 0.25, 2))

@@ -1,12 +1,15 @@
 import hashlib
 import hmac
 import json
+from decimal import Decimal
 
 import pytest
 
 from app import create_app
 from app.extensions import db
 from app.models.collection_task import CollectionTask
+from app.services.collection_task_service import CollectionTaskService
+from app.services.simulation_service import SimulationService
 from app.services.merchant_service import MerchantService
 from app.services.razorpay_service import RazorpayService
 
@@ -330,3 +333,53 @@ def test_simulation_validates_customer_count(client):
     response = client.post("/api/simulation/generate", json={"customerCount": 0})
     assert response.status_code == 400
     assert "customerCount" in response.get_json()["error"]
+
+
+def test_simulation_strategies_share_scenarios_and_calculate_metrics():
+    dataset = SimulationService.generate_dataset(123, 200, SimulationService.DEFAULT_AS_OF)
+    baseline = SimulationService._evaluate_strategy(dataset, "baseline")
+    rules = SimulationService._evaluate_strategy(dataset, "collection_rules")
+    scenarios = {customer["id"]: customer for customer in dataset["customers"]}
+    assert all(customer["transactions"] for customer in dataset["customers"])
+    assert all("collectionEvents" in customer for customer in dataset["customers"])
+    assert all(customer["timeline"] == sorted(customer["timeline"], key=lambda event: event["date"]) for customer in dataset["customers"])
+    assert all("responseDraw" in customer for customer in dataset["customers"])
+
+    baseline_by_id = {result["customerId"]: result for result in baseline["customerResults"]}
+    rules_by_id = {result["customerId"]: result for result in rules["customerResults"]}
+    common_ids = set(baseline_by_id) & set(rules_by_id)
+    assert common_ids
+    assert all(baseline_by_id[customer_id]["scenarioId"] == customer_id for customer_id in common_ids)
+    assert all(baseline_by_id[customer_id]["responseDraw"] == scenarios[customer_id]["responseDraw"] for customer_id in common_ids)
+    assert all(rules_by_id[customer_id]["responseDraw"] == scenarios[customer_id]["responseDraw"] for customer_id in common_ids)
+
+    baseline_targeted = sum(Decimal(str(result["targetedAmount"])) for result in baseline["customerResults"])
+    baseline_recovered = sum(Decimal(str(result["recoveredAmount"])) for result in baseline["customerResults"])
+    rules_targeted = sum(Decimal(str(result["targetedAmount"])) for result in rules["customerResults"])
+    rules_recovered = sum(Decimal(str(result["recoveredAmount"])) for result in rules["customerResults"])
+    assert baseline["amountTargeted"] == float(baseline_targeted)
+    assert baseline["amountRecovered"] == float(baseline_recovered)
+    assert rules["amountTargeted"] == float(rules_targeted)
+    assert rules["amountRecovered"] == float(rules_recovered)
+    assert rules["expectedRecovery"] == float(sum(Decimal(str(result["expectedRecovery"])) for result in rules["customerResults"]))
+    assert any(baseline_by_id[customer_id]["recoveredAmount"] != rules_by_id[customer_id]["recoveredAmount"] for customer_id in common_ids)
+
+
+def test_collection_action_selection_maximizes_expected_recovery_with_cooldown():
+    features = {
+        "outstandingAmount": 10000,
+        "daysOverdue": 12,
+        "reminderSuccessRate": 0.2,
+        "partialPaymentRate": 0.9,
+        "paymentCount": 4,
+        "averagePaymentDelay": 20,
+        "daysSinceLastCollectionAction": 10,
+        "behaviorProfile": "partial_payer",
+    }
+    evaluation = CollectionTaskService.evaluate_actions(features)
+    eligible = [action for action in evaluation["actions"] if action["action"] not in {"WAIT", "ESCALATE"}]
+    assert evaluation["selected"]["expectedRecovery"] == max(action["expectedRecovery"] for action in eligible)
+    assert evaluation["selected"]["action"] == "OFFER_PARTIAL"
+
+    features["daysSinceLastCollectionAction"] = 2
+    assert CollectionTaskService.evaluate_actions(features)["selected"]["action"] == "WAIT"
