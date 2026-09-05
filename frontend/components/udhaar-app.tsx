@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -673,6 +673,16 @@ function CollectionQueuePage() {
       void refresh();
     }, [refresh]);
 
+    const handleRefresh = () => {
+      setError("");
+      void refresh();
+    };
+
+    const handleClose = () => {
+      setSelected(null);
+      setError("");
+    };
+
     const updateTask = async (action: "approve" | "reject", taskId: string) => {
       setError("");
       if (action === "approve") setExecutingTaskId(taskId);
@@ -680,7 +690,7 @@ function CollectionQueuePage() {
       setExecutingTaskId(null);
       if (result.error) return setError(result.error);
       if (result.task) return setSelected(result.task);
-      setSelected(null);
+      handleClose();
     };
 
     return (
@@ -691,11 +701,11 @@ function CollectionQueuePage() {
             <h2>Collection Queue</h2>
             <p>Review the next best collection action for each outstanding customer.</p>
           </div>
-          <button className="secondary-btn" onClick={() => void refresh()}>
+          <button className="secondary-btn" onClick={handleRefresh}>
             Refresh queue
           </button>
         </section>
-        {error && <p className="form-error">{error}</p>}
+        {error && !selected && <p className="form-error">{error}</p>}
         <div className="table-panel">
           <table>
             <thead>
@@ -730,35 +740,42 @@ function CollectionQueuePage() {
           {!tasks.length && <div className="empty"><h3>No collection actions right now</h3><p>Customers with outstanding balances will appear here after evaluation.</p></div>}
         </div>
         {selected && (
-          <div className="modal-backdrop" onClick={() => setSelected(null)}>
-            <div className="modal" onClick={(event) => event.stopPropagation()}>
+          <div className="modal-backdrop" onClick={handleClose}>
+            <div className="modal queue-modal" onClick={(event) => event.stopPropagation()} style={{ maxWidth: '800px', width: 'calc(100vw - 32px)', maxHeight: '90vh', overflowY: 'auto' }}>
               <div className="modal-head">
-                <div><span className="eyebrow">Rule reasoning</span><h2>{selected.customerName}</h2></div>
-                <button className="icon-btn" onClick={() => setSelected(null)} aria-label="Close"><X size={18} /></button>
+                <div><span className="eyebrow">Task: {selected.action.replaceAll("_", " ")}</span><h2>{selected.customerName}</h2></div>
+                <button className="icon-btn" onClick={handleClose} aria-label="Close"><X size={18} /></button>
               </div>
-              <div className="detail-balance"><span>Recommended action</span><strong>{selected.action.replaceAll("_", " ")}</strong><p>{selected.reason}</p></div>
+              <div className="detail-balance" style={{ whiteSpace: 'normal', overflowWrap: 'break-word', wordWrap: 'break-word' }}>
+                <span>Recommended action</span>
+                <strong>{selected.action.replaceAll("_", " ")} - {Math.round(selected.confidence * 100)}% Match</strong>
+                <p style={{ lineHeight: '1.5', marginTop: '8px' }}>{selected.reason}</p>
+              </div>
+              {error && <p className="form-error">{error}</p>}
               {selected.executionError && <p className="form-error">{selected.executionError}</p>}
               {selected.paymentLinkUrl && (
                 <div className="link-preview">
                   <span>Razorpay Payment Link</span>
                   <strong>{selected.paymentLinkUrl}</strong>
-                  <div className="modal-actions">
+                  <div className="modal-actions" style={{ marginTop: '12px' }}>
                     <button className="secondary-btn" onClick={() => void navigator.clipboard.writeText(selected.paymentLinkUrl as string)}>Copy Link</button>
                     <button className="secondary-btn" onClick={() => window.open(selected.paymentLinkUrl, "_blank", "noopener,noreferrer")}>Open Link</button>
                   </div>
                 </div>
               )}
-              <div className="balance-breakdown">
-                <div><span>Outstanding</span><strong>{money(selected.metrics.outstandingAmount)}</strong></div>
-                <div><span>Days overdue</span><strong>{selected.metrics.daysOverdue}</strong></div>
-                <div><span>Payment delay</span><strong>{selected.metrics.averagePaymentDelay} days</strong></div>
-                <div><span>Reminder success</span><strong>{Math.round(selected.metrics.reminderSuccessRate * 100)}%</strong></div>
-                <div><span>Partial payment rate</span><strong>{Math.round(selected.metrics.partialPaymentRate * 100)}%</strong></div>
-                <div><span>Last action</span><strong>{selected.metrics.daysSinceLastCollectionAction == null ? "Never" : `${selected.metrics.daysSinceLastCollectionAction} days ago`}</strong></div>
+              <div className="balance-breakdown" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '16px' }}>
+                <div style={{ background: 'var(--bg-muted)', padding: '12px', borderRadius: '8px' }}><span>Outstanding</span><strong>{money(selected.metrics.outstandingAmount)}</strong></div>
+                <div style={{ background: 'var(--bg-muted)', padding: '12px', borderRadius: '8px' }}><span>Days overdue</span><strong>{selected.metrics.daysOverdue}</strong></div>
+                <div style={{ background: 'var(--bg-muted)', padding: '12px', borderRadius: '8px' }}><span>Payment delay</span><strong>{selected.metrics.averagePaymentDelay} days</strong></div>
+                <div style={{ background: 'var(--bg-muted)', padding: '12px', borderRadius: '8px' }}><span>Reminder success</span><strong>{Math.round(selected.metrics.reminderSuccessRate * 100)}%</strong></div>
+                <div style={{ background: 'var(--bg-muted)', padding: '12px', borderRadius: '8px' }}><span>Partial payment rate</span><strong>{Math.round(selected.metrics.partialPaymentRate * 100)}%</strong></div>
+                <div style={{ background: 'var(--bg-muted)', padding: '12px', borderRadius: '8px' }}><span>Last action</span><strong>{selected.metrics.daysSinceLastCollectionAction == null ? "Never" : `${selected.metrics.daysSinceLastCollectionAction} days ago`}</strong></div>
               </div>
-              <div className="modal-actions">
+              <div className="modal-actions" style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
                 <button className="secondary-btn" onClick={() => void updateTask("reject", selected.id)}>Reject</button>
-                <button className="primary-btn" disabled={executingTaskId === selected.id || selected.status !== "pending"} onClick={() => void updateTask("approve", selected.id)}>{executingTaskId === selected.id ? "Creating link..." : selected.status === "executed" ? "Link created" : "Approve"}</button>
+                <button className="primary-btn" style={{ minWidth: '120px' }} disabled={executingTaskId === selected.id || selected.status !== "pending"} onClick={() => void updateTask("approve", selected.id)}>
+                  {executingTaskId === selected.id ? "Approving..." : selected.status === "executed" ? "Link created" : "Approve"}
+                </button>
               </div>
             </div>
           </div>

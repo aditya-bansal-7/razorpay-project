@@ -266,8 +266,8 @@ def test_collection_task_provider_failure_is_persisted(client, monkeypatch):
     task = next(task for task in client.get("/api/collections/queue").get_json()["data"] if task["customerId"] == customer_id)
     monkeypatch.setattr(RazorpayService, "create_payment_link", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("provider unavailable")))
     response = client.post(f"/api/collections/{task['id']}/approve")
-    assert response.status_code == 502
-    assert response.get_json()["error"] == "Razorpay payment link creation failed"
+    assert response.status_code == 422
+    assert "Unable to create payment link" in response.get_json()["error"]
     assert response.get_json()["details"]["status"] == "failed"
     assert "provider unavailable" in response.get_json()["details"]["executionError"]
     with client.application.app_context():

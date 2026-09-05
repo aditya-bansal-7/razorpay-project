@@ -68,7 +68,7 @@ class TestAIConfig:
         assert config.api_key == "test-key-123"
         assert config.enabled is True
         assert config.is_configured is True
-        assert config.model_name == "gemini-2.0-flash"
+        assert config.model_name == "gemini-3.6-flash"
         assert config.timeout == 30
 
     def test_config_without_api_key(self, monkeypatch):
@@ -202,7 +202,7 @@ class TestGeminiProvider:
 
                 config = AIConfig(
                     api_key="test-key",
-                    model_name="gemini-2.0-flash",
+                    model_name="gemini-3.6-flash",
                     timeout=30,
                     enabled=True,
                 )
@@ -217,7 +217,7 @@ class TestGeminiProvider:
 
         config = AIConfig(
             api_key=None,
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.6-flash",
             timeout=30,
             enabled=True,
         )
@@ -231,7 +231,7 @@ class TestGeminiProvider:
 
         config = AIConfig(
             api_key=None,
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.6-flash",
             timeout=30,
             enabled=True,
         )
@@ -246,7 +246,7 @@ class TestGeminiProvider:
 
         config = AIConfig(
             api_key="test-key",
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.6-flash",
             timeout=30,
             enabled=True,
         )
@@ -271,7 +271,7 @@ class TestGeminiProvider:
 
         config = AIConfig(
             api_key="test-key",
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.6-flash",
             timeout=30,
             enabled=True,
         )
@@ -306,7 +306,7 @@ class TestGeminiProvider:
 
         config = AIConfig(
             api_key="test-key",
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.6-flash",
             timeout=30,
             enabled=True,
         )
@@ -341,7 +341,7 @@ class TestGeminiProvider:
 
         config = AIConfig(
             api_key="test-key",
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.6-flash",
             timeout=30,
             enabled=True,
         )
@@ -364,7 +364,7 @@ class TestGeminiProvider:
 
         config = AIConfig(
             api_key="test-key",
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.6-flash",
             timeout=30,
             enabled=True,
         )
@@ -387,7 +387,7 @@ class TestGeminiProvider:
 
         config = AIConfig(
             api_key="test-key",
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.6-flash",
             timeout=30,
             enabled=True,
         )
@@ -410,7 +410,7 @@ class TestGeminiProvider:
 
         config = AIConfig(
             api_key="test-key",
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.6-flash",
             timeout=30,
             enabled=True,
         )
@@ -425,7 +425,7 @@ class TestGeminiProvider:
             "enabled": True,
             "provider": "gemini",
             "configured": True,
-            "model": "gemini-2.0-flash",
+            "model": "gemini-3.6-flash",
         }
         # Verify no API calls were made
         provider._client.models.generate_content.assert_not_called()
@@ -474,7 +474,7 @@ class TestAIHealthEndpoint:
                 "enabled": True,
                 "provider": "gemini",
                 "configured": True,
-                "model": "gemini-2.0-flash",
+                "model": "gemini-3.6-flash",
             }
             mock_cls.return_value = mock_instance
             mock_cls.PROVIDER_NAME = "gemini"
@@ -523,7 +523,7 @@ class TestAIHealthEndpoint:
                 "enabled": True,
                 "provider": "gemini",
                 "configured": True,
-                "model": "gemini-2.0-flash",
+                "model": "gemini-3.6-flash",
             }
             mock_cls.return_value = mock_instance
             mock_cls.PROVIDER_NAME = "gemini"

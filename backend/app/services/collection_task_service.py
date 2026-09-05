@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from decimal import Decimal
 
@@ -214,14 +215,39 @@ class CollectionTaskService:
             task.updated_at = datetime.utcnow()
             db.session.commit()
             raise
-        except Exception as exc:
+        except RuntimeError as exc:
             db.session.rollback()
             task = db.session.get(CollectionTask, task_id)
             task.status = "failed"
             task.execution_error = str(exc)
             task.updated_at = datetime.utcnow()
             db.session.commit()
-            raise CollectionTaskService.ExecutionError("Razorpay payment link creation failed", 502) from exc
+            raise CollectionTaskService.ExecutionError(f"Unable to create payment link: {str(exc)}", 422) from exc
+        except Exception as exc:
+            db.session.rollback()
+            
+            # Temporary diagnostic logging
+            payload_snapshot = {
+                "amount": float(outstanding),
+                "currency": "INR",
+                "accept_partial": task.action == "OFFER_PARTIAL",
+                "reference_id": task.id
+            }
+            logging.error(
+                "Razorpay link creation failed. Exception: %s, Message: %s, Status/Code: %s. Payload snapshot: %s",
+                exc.__class__.__name__,
+                str(exc),
+                getattr(exc, 'status_code', getattr(exc, 'code', 'N/A')),
+                payload_snapshot
+            )
+
+            task = db.session.get(CollectionTask, task_id)
+            task.status = "failed"
+            # Ensure task.execution_error stores the useful provider error
+            task.execution_error = f"Provider error: {str(exc)}"
+            task.updated_at = datetime.utcnow()
+            db.session.commit()
+            raise CollectionTaskService.ExecutionError("Unable to create payment link with provider.", 422) from exc
 
     @staticmethod
     def queue(merchant_id="merchant-001"):

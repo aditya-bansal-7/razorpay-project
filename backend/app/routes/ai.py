@@ -22,7 +22,7 @@ def ai_health():
             "enabled": true,
             "provider": "gemini",
             "configured": true,
-            "model": "gemini-2.0-flash"
+            "model": "gemini-3.6-flash"
         }
 
     This endpoint never calls the Gemini API — it only inspects

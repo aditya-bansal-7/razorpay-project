@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { create } from 'zustand'
 import { api, toCollectionTaskModel, toCustomerModel, toLedgerModel } from './api'
@@ -143,7 +143,7 @@ export const useUdhaarStore = create<State>((set, get) => ({
       set({ error: response.error })
       return
     }
-    set({ collectionTasks: (response.data ?? []).map(toCollectionTaskModel) })
+    set({ error: null, collectionTasks: (response.data ?? []).map(toCollectionTaskModel) })
   },
   approveCollectionTask: async (taskId) => {
     const response = await api.approveCollectionTask(taskId)
