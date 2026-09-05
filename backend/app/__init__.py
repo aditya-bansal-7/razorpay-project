@@ -28,7 +28,7 @@ def create_app(test_config=None):
     migrate.init_app(app, db)
     CORS(
         app,
-        resources={r"/api/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]}},
+        resources={r"/api/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000", "https://razorpay-project-orpin.vercel.app"]}},
         supports_credentials=False,
     )
 
